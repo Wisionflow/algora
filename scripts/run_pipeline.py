@@ -46,6 +46,7 @@ async def run(
     category: str = "electronics",
     dry_run: bool = False,
     source: str = "demo",
+    top_n: int = 3,
 ) -> None:
     logger.info("=== ALGORA Pipeline START ===")
     logger.info("Source: {}, Category: {}, Dry run: {}", source, category, dry_run)
@@ -60,7 +61,7 @@ async def run(
     else:
         collector = Collector1688()
 
-    raw_products = await collector.collect(category=category, limit=12)
+    raw_products = await collector.collect(category=category, limit=20)
 
     if not raw_products:
         logger.warning("No products collected.")
@@ -121,49 +122,59 @@ async def run(
 
     # Sort by total score
     analyzed.sort(key=lambda p: p.total_score, reverse=True)
-    best = analyzed[0]
+    top = analyzed[:top_n]
 
-    logger.info(
-        "BEST: {} (score={}, margin={}%)",
-        best.raw.title_ru[:50],
-        best.total_score,
-        best.margin_pct,
-    )
+    logger.info("Top {} products selected for publishing:", len(top))
+    for i, p in enumerate(top, 1):
+        logger.info(
+            "  {}. {} (score={}, margin={}%)",
+            i,
+            p.raw.title_ru[:45],
+            p.total_score,
+            p.margin_pct,
+        )
 
-    # --- STEP 3: AI INSIGHT ---
-    logger.info("--- Step 3: AI INSIGHT ---")
-    best.ai_insight = await generate_insight(best)
-    save_analyzed_product(best)
+    # --- STEP 3-5: AI INSIGHT + COMPOSE + PUBLISH (for each top product) ---
+    published_count = 0
+    for idx, product in enumerate(top, 1):
+        logger.info("--- Post {}/{}: AI INSIGHT ---", idx, len(top))
+        product.ai_insight = await generate_insight(product)
+        save_analyzed_product(product)
 
-    # --- STEP 4: COMPOSE ---
-    logger.info("--- Step 4: COMPOSE ---")
-    post = compose_post(best)
-    logger.info("Post composed ({} chars)", len(post.text))
+        logger.info("--- Post {}/{}: COMPOSE ---", idx, len(top))
+        post = compose_post(product)
+        logger.info("Post {} composed ({} chars)", idx, len(post.text))
 
-    # Print preview
-    print("\n" + "=" * 60)
-    print("PREVIEW:")
-    print("=" * 60)
-    preview = re.sub(r"<[^>]+>", "", post.text)
-    print(preview)
-    print("=" * 60 + "\n")
+        # Print preview
+        print("\n" + "=" * 60)
+        print(f"PREVIEW [{idx}/{len(top)}]:")
+        print("=" * 60)
+        preview = re.sub(r"<[^>]+>", "", post.text)
+        print(preview)
+        print("=" * 60 + "\n")
 
-    # --- STEP 5: PUBLISH ---
-    if dry_run:
-        logger.info("Dry run -- skipping Telegram publish")
-    else:
-        logger.info("--- Step 5: PUBLISH ---")
-        post = await send_post(post)
-        if post.published:
-            save_published_post(post)
-            logger.info("Published successfully!")
+        if dry_run:
+            logger.info("Dry run -- skipping Telegram publish")
         else:
-            logger.error("Failed to publish")
+            logger.info("--- Post {}/{}: PUBLISH ---", idx, len(top))
+            post = await send_post(post)
+            if post.published:
+                save_published_post(post)
+                published_count += 1
+                logger.info("Post {} published!", idx)
+            else:
+                logger.error("Post {} failed to publish", idx)
+
+            # Small delay between Telegram messages to avoid flood limits
+            if idx < len(top):
+                await asyncio.sleep(3.0)
 
     # --- SUMMARY ---
     logger.info("=== Pipeline DONE ===")
     logger.info("Products collected: {}", len(raw_products))
     logger.info("Products analyzed: {}", len(analyzed))
+    if not dry_run:
+        logger.info("Posts published: {}/{}", published_count, len(top))
     logger.info("Top 5 by score:")
     for i, p in enumerate(analyzed[:5], 1):
         logger.info(
@@ -193,9 +204,20 @@ def main() -> None:
         action="store_true",
         help="Run without publishing to Telegram",
     )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=3,
+        help="Number of top products to publish (default: 3)",
+    )
     args = parser.parse_args()
 
-    asyncio.run(run(category=args.category, dry_run=args.dry_run, source=args.source))
+    asyncio.run(run(
+        category=args.category,
+        dry_run=args.dry_run,
+        source=args.source,
+        top_n=args.top,
+    ))
 
 
 if __name__ == "__main__":
