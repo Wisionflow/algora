@@ -26,6 +26,8 @@ class RawProduct(BaseModel):
     image_url: str = ""
     specs: dict = Field(default_factory=dict)
     collected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    wb_keyword: str = ""       # optimized WB search term
+    wb_est_price: float = 0.0  # fallback estimated WB price (rub)
 
 
 class AnalyzedProduct(BaseModel):

@@ -82,15 +82,23 @@ async def run(
             logger.debug("Skipping already published: {}", raw.title_ru[:40])
             continue
 
-        # Get WB market data
+        # Get WB market data (use wb_keyword if available, fallback to title)
         search_query = raw.title_ru[:50] if raw.title_ru else raw.title_cn[:30]
-        wb_data = await get_wb_market_data(search_query)
+        wb_data = await get_wb_market_data(search_query, keyword=raw.wb_keyword)
+
+        # If WB API failed, use estimated fallback price
+        wb_price = wb_data["avg_price"]
+        wb_comps = wb_data["competitors"]
+        if wb_price == 0 and raw.wb_est_price > 0:
+            wb_price = raw.wb_est_price
+            wb_comps = 30  # assume moderate competition as fallback
+            logger.debug("Using fallback WB price: {}r", wb_price)
 
         # Score the product
         product = analyze_product(
             raw,
-            wb_avg_price=wb_data["avg_price"],
-            wb_competitors=wb_data["competitors"],
+            wb_avg_price=wb_price,
+            wb_competitors=wb_comps,
         )
         analyzed.append(product)
         save_analyzed_product(product)
@@ -105,7 +113,7 @@ async def run(
         )
 
         # Delay to avoid WB rate limits (429)
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(5.0)
 
     if not analyzed:
         logger.warning("No new products to analyze.")
