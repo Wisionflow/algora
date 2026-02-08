@@ -1,0 +1,194 @@
+"""Algora Pipeline — full run: Collect -> Analyze -> Compose -> Publish.
+
+Usage:
+    python -m scripts.run_pipeline --dry-run
+    python -m scripts.run_pipeline --dry-run --source demo
+    python -m scripts.run_pipeline --category electronics
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import re
+import sys
+from pathlib import Path
+
+# Fix Windows console encoding
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if sys.stdout and sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from loguru import logger
+
+from src.collect.alibaba_1688 import Collector1688
+from src.collect.demo_source import DemoCollector
+from src.collect.wb_analytics import get_wb_market_data
+from src.analyze.scoring import analyze_product
+from src.analyze.ai_analysis import generate_insight
+from src.compose.telegram_post import compose_post
+from src.publish.telegram_bot import send_post
+from src.db import (
+    init_db,
+    save_raw_product,
+    save_analyzed_product,
+    save_published_post,
+    is_already_published,
+)
+from src.models import AnalyzedProduct
+
+
+async def run(
+    category: str = "electronics",
+    dry_run: bool = False,
+    source: str = "demo",
+) -> None:
+    logger.info("=== ALGORA Pipeline START ===")
+    logger.info("Source: {}, Category: {}, Dry run: {}", source, category, dry_run)
+
+    # Init DB
+    init_db()
+
+    # --- STEP 1: COLLECT ---
+    logger.info("--- Step 1: COLLECT ---")
+    if source == "demo":
+        collector = DemoCollector()
+    else:
+        collector = Collector1688()
+
+    raw_products = await collector.collect(category=category, limit=12)
+
+    if not raw_products:
+        logger.warning("No products collected.")
+        return
+
+    logger.info("Collected {} products", len(raw_products))
+
+    # Save raw products
+    for p in raw_products:
+        save_raw_product(p)
+
+    # --- STEP 2: ANALYZE ---
+    logger.info("--- Step 2: ANALYZE ---")
+    analyzed: list[AnalyzedProduct] = []
+
+    for raw in raw_products:
+        # Skip already published
+        if is_already_published(raw.source_url):
+            logger.debug("Skipping already published: {}", raw.title_ru[:40])
+            continue
+
+        # Get WB market data
+        search_query = raw.title_ru[:50] if raw.title_ru else raw.title_cn[:30]
+        wb_data = await get_wb_market_data(search_query)
+
+        # Score the product
+        product = analyze_product(
+            raw,
+            wb_avg_price=wb_data["avg_price"],
+            wb_competitors=wb_data["competitors"],
+        )
+        analyzed.append(product)
+        save_analyzed_product(product)
+
+        logger.info(
+            "  [{}/{}] {} -> score={}, margin={}%",
+            len(analyzed),
+            len(raw_products),
+            raw.title_ru[:35],
+            product.total_score,
+            product.margin_pct,
+        )
+
+        # Delay to avoid WB rate limits (429)
+        await asyncio.sleep(2.0)
+
+    if not analyzed:
+        logger.warning("No new products to analyze.")
+        return
+
+    # Sort by total score
+    analyzed.sort(key=lambda p: p.total_score, reverse=True)
+    best = analyzed[0]
+
+    logger.info(
+        "BEST: {} (score={}, margin={}%)",
+        best.raw.title_ru[:50],
+        best.total_score,
+        best.margin_pct,
+    )
+
+    # --- STEP 3: AI INSIGHT ---
+    logger.info("--- Step 3: AI INSIGHT ---")
+    best.ai_insight = await generate_insight(best)
+    save_analyzed_product(best)
+
+    # --- STEP 4: COMPOSE ---
+    logger.info("--- Step 4: COMPOSE ---")
+    post = compose_post(best)
+    logger.info("Post composed ({} chars)", len(post.text))
+
+    # Print preview
+    print("\n" + "=" * 60)
+    print("PREVIEW:")
+    print("=" * 60)
+    preview = re.sub(r"<[^>]+>", "", post.text)
+    print(preview)
+    print("=" * 60 + "\n")
+
+    # --- STEP 5: PUBLISH ---
+    if dry_run:
+        logger.info("Dry run -- skipping Telegram publish")
+    else:
+        logger.info("--- Step 5: PUBLISH ---")
+        post = await send_post(post)
+        if post.published:
+            save_published_post(post)
+            logger.info("Published successfully!")
+        else:
+            logger.error("Failed to publish")
+
+    # --- SUMMARY ---
+    logger.info("=== Pipeline DONE ===")
+    logger.info("Products collected: {}", len(raw_products))
+    logger.info("Products analyzed: {}", len(analyzed))
+    logger.info("Top 5 by score:")
+    for i, p in enumerate(analyzed[:5], 1):
+        logger.info(
+            "  {}. {} -- score={}, margin={}%",
+            i,
+            p.raw.title_ru[:40] or p.raw.title_cn[:40],
+            p.total_score,
+            p.margin_pct,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Algora Pipeline")
+    parser.add_argument(
+        "--category",
+        default="electronics",
+        help="Product category (default: electronics)",
+    )
+    parser.add_argument(
+        "--source",
+        default="demo",
+        choices=["demo", "1688"],
+        help="Data source (default: demo)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run without publishing to Telegram",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(run(category=args.category, dry_run=args.dry_run, source=args.source))
+
+
+if __name__ == "__main__":
+    main()
