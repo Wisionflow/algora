@@ -1,8 +1,13 @@
-"""Generate ALGORA logo programmatically.
+"""Generate 4 ALGORA logo variants for selection.
 
-Creates a stylized "A" made of connected nodes and geometric lines,
-resembling a neural network graph on dark navy background with amber gold accent.
-Output: 800x800 PNG (will be resized for Telegram avatar).
+Each variant: stylized "A" on dark navy background with amber gold accent.
+Variant 1: Constellation — minimal dots and thin lines, starfield feel
+Variant 2: Monolith — bold solid geometric "A", clean and heavy
+Variant 3: Circuit — PCB traces and right-angle connections
+Variant 4: Portal — concentric arcs with "A" silhouette, sci-fi feel
+
+Usage:
+    python -X utf8 scripts/generate_logo.py
 """
 
 from __future__ import annotations
@@ -15,156 +20,324 @@ from PIL import Image, ImageDraw, ImageFont
 # Brand colors
 NAVY = (26, 35, 126)       # #1A237E
 AMBER = (255, 160, 0)      # #FFA000
+AMBER_DIM = (180, 112, 0)  # dimmed amber for secondary elements
 WHITE = (255, 255, 255)
 SLATE = (96, 125, 139)     # #607D8B
 
 SIZE = 800
-CENTER_X = SIZE // 2
-CENTER_Y = SIZE // 2
+CX = SIZE // 2
+CY = SIZE // 2
 
 OUTPUT_DIR = Path(__file__).parent.parent / "assets"
 
 
-def draw_logo() -> Image.Image:
+def _load_font(size: int):
+    for path in ["C:/Windows/Fonts/arial.ttf", "arial.ttf"]:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _draw_text(draw: ImageDraw.ImageDraw, text: str, y: int, font_size: int = 68, color=AMBER):
+    font = _load_font(font_size)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    draw.text(((SIZE - tw) // 2, y), text, fill=color, font=font)
+
+
+def _node(draw, pos, radius, fill, outline=None):
+    x, y = pos
+    draw.ellipse([x - radius, y - radius, x + radius, y + radius],
+                 fill=fill, outline=outline, width=2)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# VARIANT 1 — Constellation (minimal, starfield, elegant)
+# ═══════════════════════════════════════════════════════════════════
+def variant_constellation() -> Image.Image:
     img = Image.new("RGB", (SIZE, SIZE), NAVY)
     draw = ImageDraw.Draw(img)
 
-    # --- Stylized "A" structure ---
-    # The "A" is made of nodes connected by lines
-    # Main triangle shape of letter A
-    top = (CENTER_X, 120)
-    bottom_left = (160, 650)
-    bottom_right = (640, 650)
-    # Crossbar points
-    cross_left = (255, 440)
-    cross_right = (545, 440)
-    # Mid-points on legs for extra nodes
-    mid_left = (208, 545)
-    mid_right = (592, 545)
-    upper_left = (230, 300)
-    upper_right = (570, 300)
-    # Inner nodes (neural network feel)
-    inner_top = (CENTER_X, 250)
-    inner_left = (320, 380)
-    inner_right = (480, 380)
-    inner_center = (CENTER_X, 340)
-    inner_bottom = (CENTER_X, 520)
+    # Sparse star-like dots in background
+    import random
+    random.seed(42)
+    for _ in range(60):
+        x = random.randint(30, SIZE - 30)
+        y = random.randint(30, 660)
+        r = random.choice([1, 1, 1, 2])
+        opacity = random.randint(60, 140)
+        _node(draw, (x, y), r, (96, 125, 139))
 
-    # All nodes
-    main_nodes = [top, bottom_left, bottom_right, cross_left, cross_right,
-                  mid_left, mid_right, upper_left, upper_right]
-    inner_nodes = [inner_top, inner_left, inner_right, inner_center, inner_bottom]
+    # "A" as constellation — key stars connected by thin lines
+    top = (CX, 100)
+    left = (170, 600)
+    right = (630, 600)
+    cl = (270, 410)
+    cr = (530, 410)
+    ul = (220, 505)
+    ur = (580, 505)
+    mid_upper_l = (250, 260)
+    mid_upper_r = (550, 260)
 
-    # --- Draw connections (lines) ---
-    # Main A structure
-    main_edges = [
-        (top, upper_left), (upper_left, cross_left), (cross_left, mid_left), (mid_left, bottom_left),
-        (top, upper_right), (upper_right, cross_right), (cross_right, mid_right), (mid_right, bottom_right),
-        (cross_left, cross_right),
+    stars = [top, left, right, cl, cr, ul, ur, mid_upper_l, mid_upper_r]
+    edges = [
+        (top, mid_upper_l), (top, mid_upper_r),
+        (mid_upper_l, cl), (mid_upper_r, cr),
+        (cl, ul), (cr, ur),
+        (ul, left), (ur, right),
+        (cl, cr),  # crossbar
     ]
 
-    # Inner neural network connections
-    neural_edges = [
-        (top, inner_top),
-        (inner_top, inner_left), (inner_top, inner_right), (inner_top, inner_center),
-        (inner_left, inner_center), (inner_right, inner_center),
-        (inner_left, cross_left), (inner_right, cross_right),
-        (inner_center, inner_bottom),
-        (inner_bottom, cross_left), (inner_bottom, cross_right),
-        (inner_bottom, mid_left), (inner_bottom, mid_right),
-        (upper_left, inner_left), (upper_right, inner_right),
-    ]
+    # Thin connecting lines
+    for p1, p2 in edges:
+        draw.line([p1, p2], fill=AMBER_DIM, width=2)
 
-    # Draw neural edges first (thinner, amber with transparency effect)
-    for p1, p2 in neural_edges:
-        draw.line([p1, p2], fill=(*AMBER, 180), width=2)
+    # Star nodes — varying sizes for depth
+    sizes = [12, 6, 6, 8, 8, 5, 5, 7, 7]
+    for star, sz in zip(stars, sizes):
+        # Glow effect
+        _node(draw, star, sz + 4, (255, 200, 50))
+        _node(draw, star, sz, AMBER)
+        _node(draw, star, max(2, sz - 3), WHITE)
 
-    # Draw main structure edges (thicker, bright amber)
-    for p1, p2 in main_edges:
-        draw.line([p1, p2], fill=AMBER, width=4)
-
-    # --- Draw nodes ---
-    def draw_node(pos: tuple[int, int], radius: int, fill: tuple, outline: tuple | None = None):
-        x, y = pos
-        draw.ellipse(
-            [x - radius, y - radius, x + radius, y + radius],
-            fill=fill,
-            outline=outline,
-            width=2,
-        )
-
-    # Main structural nodes (larger, amber)
-    for node in main_nodes:
-        draw_node(node, 10, AMBER, WHITE)
-
-    # Inner neural nodes (smaller, white core with amber outline)
-    for node in inner_nodes:
-        draw_node(node, 7, WHITE, AMBER)
-
-    # Top node special (largest, glowing)
-    draw_node(top, 14, AMBER, WHITE)
-
-    # --- Add "ALGORA" text below the symbol ---
-    # Try to load a clean font, fall back to default
-    font_size = 72
-    try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except OSError:
-        try:
-            font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", font_size)
-        except OSError:
-            font = ImageFont.load_default()
-
-    text = "ALGORA"
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_x = (SIZE - text_w) // 2
-    text_y = 695
-
-    # Draw text with slight letter spacing effect
-    draw.text((text_x, text_y), text, fill=AMBER, font=font)
-
-    # Subtle decorative dots around the edges (ambient neural network feel)
-    ambient_positions = [
-        (80, 180), (720, 180), (60, 400), (740, 400),
-        (100, 300), (700, 300), (130, 500), (670, 500),
-        (50, 550), (750, 550), (90, 650), (710, 650),
-    ]
-    for pos in ambient_positions:
-        draw_node(pos, 3, SLATE)
-
-    # Faint connecting lines from ambient dots to nearest main nodes
-    faint_connections = [
-        ((80, 180), top), ((720, 180), top),
-        ((60, 400), cross_left), ((740, 400), cross_right),
-        ((130, 500), mid_left), ((670, 500), mid_right),
-    ]
-    for p1, p2 in faint_connections:
-        draw.line([p1, p2], fill=(*SLATE, 100), width=1)
-
+    _draw_text(draw, "ALGORA", 690)
     return img
 
 
+# ═══════════════════════════════════════════════════════════════════
+# VARIANT 2 — Monolith (bold, solid, corporate)
+# ═══════════════════════════════════════════════════════════════════
+def variant_monolith() -> Image.Image:
+    img = Image.new("RGB", (SIZE, SIZE), NAVY)
+    draw = ImageDraw.Draw(img)
+
+    # Thick solid "A" shape
+    outer_top = (CX, 80)
+    outer_bl = (110, 620)
+    outer_br = (690, 620)
+
+    # Inner cutout (triangle inside the A)
+    inner_top = (CX, 260)
+    inner_bl = (290, 470)
+    inner_br = (510, 470)
+
+    # Left leg
+    ll_outer = [(outer_top[0] - 60, outer_top[1] + 80), outer_bl,
+                (outer_bl[0] + 110, outer_bl[1]), (outer_top[0], outer_top[1])]
+    # Right leg
+    rl_outer = [(outer_top[0], outer_top[1]), (outer_br[0] - 110, outer_br[1]),
+                outer_br, (outer_top[0] + 60, outer_top[1] + 80)]
+
+    # Draw full triangle
+    draw.polygon([outer_top, outer_bl, outer_br], fill=AMBER)
+
+    # Cut out inner triangle (navy to create the "A" hole)
+    draw.polygon([inner_top, inner_bl, inner_br], fill=NAVY)
+
+    # Crossbar gap — cut horizontal strip in the legs below the hole
+    bar_y1 = 490
+    bar_y2 = 530
+    # Left gap
+    draw.rectangle([0, bar_y1, 265, bar_y2], fill=NAVY)
+    # Right gap
+    draw.rectangle([535, bar_y1, SIZE, bar_y2], fill=NAVY)
+
+    # Subtle edge glow — draw slightly larger amber shape behind
+    # (already done by the solid fill)
+
+    # Add a thin white accent line on top edge
+    draw.line([(CX - 2, 80), (112, 618)], fill=WHITE, width=1)
+    draw.line([(CX + 2, 80), (688, 618)], fill=WHITE, width=1)
+
+    # Decorative horizontal lines at bottom
+    for i in range(3):
+        y = 645 + i * 12
+        alpha = 200 - i * 60
+        draw.line([(200 + i * 40, y), (600 - i * 40, y)], fill=AMBER_DIM, width=1)
+
+    _draw_text(draw, "ALGORA", 690, color=AMBER)
+    return img
+
+
+# ═══════════════════════════════════════════════════════════════════
+# VARIANT 3 — Circuit (PCB traces, tech-oriented)
+# ═══════════════════════════════════════════════════════════════════
+def variant_circuit() -> Image.Image:
+    img = Image.new("RGB", (SIZE, SIZE), NAVY)
+    draw = ImageDraw.Draw(img)
+
+    # Circuit-style "A" with right-angle segments and solder pads
+    # Build the A from horizontal and vertical/diagonal segments
+
+    pad_r = 8  # solder pad radius
+    trace_w = 5
+
+    # Key points on the "A"
+    top = (CX, 100)
+    # Left leg — using angled + vertical segments
+    la1 = (CX - 30, 160)
+    la2 = (CX - 100, 280)
+    la3 = (200, 280)
+    la4 = (200, 400)  # crossbar left
+    la5 = (200, 500)
+    la6 = (160, 600)
+    la7 = (160, 640)
+
+    # Right leg — mirror
+    ra1 = (CX + 30, 160)
+    ra2 = (CX + 100, 280)
+    ra3 = (600, 280)
+    ra4 = (600, 400)  # crossbar right
+    ra5 = (600, 500)
+    ra6 = (640, 600)
+    ra7 = (640, 640)
+
+    # Crossbar
+    cb_l = (200, 400)
+    cb_r = (600, 400)
+
+    # Branch traces (decorative)
+    br1_start = (200, 340)
+    br1_end = (130, 340)
+    br2_start = (600, 340)
+    br2_end = (670, 340)
+    br3_start = (CX, 280)
+    br3_end = (CX, 220)
+
+    # Draw traces
+    traces = [
+        # Left leg
+        [top, la1, la2, la3, la4, la5, la6, la7],
+        # Right leg
+        [top, ra1, ra2, ra3, ra4, ra5, ra6, ra7],
+        # Crossbar
+        [cb_l, cb_r],
+        # Branch traces
+        [br1_start, br1_end],
+        [br2_start, br2_end],
+    ]
+
+    for trace in traces:
+        for i in range(len(trace) - 1):
+            draw.line([trace[i], trace[i + 1]], fill=AMBER, width=trace_w)
+
+    # Vertical center trace from crossbar down
+    draw.line([(CX, 400), (CX, 460)], fill=AMBER, width=trace_w)
+    _node(draw, (CX, 460), pad_r - 2, AMBER, WHITE)
+
+    # Draw solder pads at key junctions
+    pad_points = [top, la2, la3, la4, la7, ra2, ra3, ra4, ra7,
+                  br1_end, br2_end, cb_l, cb_r]
+
+    for p in pad_points:
+        _node(draw, p, pad_r, AMBER, WHITE)
+
+    # Special top pad (larger, glowing)
+    _node(draw, top, pad_r + 5, AMBER, WHITE)
+    _node(draw, top, pad_r - 1, NAVY)
+    _node(draw, top, 3, AMBER)
+
+    # Bottom pads — larger (IC pin style)
+    for p in [la7, ra7]:
+        draw.rectangle([p[0] - 14, p[1] - 6, p[0] + 14, p[1] + 6], fill=AMBER, outline=WHITE, width=1)
+
+    # Background grid (subtle)
+    for x in range(0, SIZE, 40):
+        draw.line([(x, 0), (x, SIZE)], fill=(30, 40, 140), width=1)
+    for y in range(0, SIZE, 40):
+        draw.line([(0, y), (SIZE, y)], fill=(30, 40, 140), width=1)
+
+    _draw_text(draw, "ALGORA", 690)
+    return img
+
+
+# ═══════════════════════════════════════════════════════════════════
+# VARIANT 4 — Portal (concentric arcs, sci-fi, futuristic)
+# ═══════════════════════════════════════════════════════════════════
+def variant_portal() -> Image.Image:
+    img = Image.new("RGB", (SIZE, SIZE), NAVY)
+    draw = ImageDraw.Draw(img)
+
+    # Concentric arc rings behind the "A"
+    center = (CX, 380)
+    radii = [320, 270, 220, 170]
+
+    for i, r in enumerate(radii):
+        bbox = [center[0] - r, center[1] - r, center[0] + r, center[1] + r]
+        width = 3 if i % 2 == 0 else 2
+        color = AMBER if i < 2 else AMBER_DIM
+        # Draw arcs (top portion)
+        draw.arc(bbox, start=200, end=340, fill=color, width=width)
+
+    # Smaller decorative arcs at bottom
+    for r in [130, 90]:
+        bbox = [center[0] - r, center[1] - r, center[0] + r, center[1] + r]
+        draw.arc(bbox, start=20, end=160, fill=SLATE, width=1)
+
+    # Clean geometric "A" in center — bold lines
+    top = (CX, 90)
+    bl = (185, 590)
+    br = (615, 590)
+    cl = (280, 420)
+    cr = (520, 420)
+
+    # Draw "A" with thick lines
+    line_w = 8
+    draw.line([top, bl], fill=AMBER, width=line_w)
+    draw.line([top, br], fill=AMBER, width=line_w)
+    draw.line([cl, cr], fill=AMBER, width=line_w)
+
+    # Bright dot at apex
+    _node(draw, top, 16, AMBER)
+    _node(draw, top, 8, WHITE)
+
+    # Dots at crossbar ends
+    _node(draw, cl, 8, AMBER, WHITE)
+    _node(draw, cr, 8, AMBER, WHITE)
+
+    # Dots at base
+    _node(draw, bl, 6, AMBER)
+    _node(draw, br, 6, AMBER)
+
+    # Radial lines from apex (radar/scan effect)
+    for angle_deg in [-70, -55, -40, 40, 55, 70]:
+        angle = math.radians(angle_deg - 90)  # -90 so 0 is up
+        length = 50
+        x2 = top[0] + math.cos(angle) * length
+        y2 = top[1] + math.sin(angle) * length
+        draw.line([top, (x2, y2)], fill=SLATE, width=1)
+
+    # Horizontal scan lines across entire image (subtle)
+    for y in range(100, 650, 30):
+        opacity_color = (30, 40, 140)
+        draw.line([(50, y), (750, y)], fill=opacity_color, width=1)
+
+    _draw_text(draw, "ALGORA", 690)
+    return img
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Full size logo
-    logo = draw_logo()
-    logo_path = OUTPUT_DIR / "logo_800.png"
-    logo.save(logo_path, "PNG")
-    print(f"Logo saved: {logo_path}")
+    variants = {
+        "v1_constellation": variant_constellation,
+        "v2_monolith": variant_monolith,
+        "v3_circuit": variant_circuit,
+        "v4_portal": variant_portal,
+    }
 
-    # Telegram avatar size (640x640 recommended, min 100x100)
-    avatar = logo.resize((640, 640), Image.LANCZOS)
-    avatar_path = OUTPUT_DIR / "avatar_640.png"
-    avatar.save(avatar_path, "PNG")
-    print(f"Avatar saved: {avatar_path}")
+    for name, func in variants.items():
+        img = func()
+        path = OUTPUT_DIR / f"logo_{name}.png"
+        img.save(path, "PNG")
+        print(f"Saved: {path}")
 
-    # Small preview
-    small = logo.resize((200, 200), Image.LANCZOS)
-    small_path = OUTPUT_DIR / "logo_200.png"
-    small.save(small_path, "PNG")
-    print(f"Preview saved: {small_path}")
+    print(f"\nAll 4 variants saved to {OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":

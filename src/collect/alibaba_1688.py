@@ -1,21 +1,20 @@
-"""Collector for 1688.com — China's largest wholesale marketplace.
+"""Collector for 1688.com via Apify API.
 
-Parses trending products from 1688.com search results.
+Uses Apify's 1688 search scraper to get structured product data.
 Translates titles from Chinese to Russian.
+Falls back gracefully if Apify is unavailable.
 """
 
 from __future__ import annotations
 
 import asyncio
-import random
-from urllib.parse import quote
+import re
+from datetime import datetime, timezone
 
-import httpx
-from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 from loguru import logger
 
-from src.config import REQUEST_DELAY, USER_AGENTS
+from src.config import APIFY_API_TOKEN, APIFY_1688_ACTOR_ID
 from src.models import RawProduct
 
 from .base import BaseCollector
@@ -32,9 +31,16 @@ CATEGORY_KEYWORDS: dict[str, str] = {
     "smart_home": "智能家居 热销",
     "outdoor": "户外用品 新款",
     "toys": "玩具 爆款 新奇",
+    "health": "健康 按摩 爆款",
 }
 
-translator = GoogleTranslator(source="zh-CN", target="ru")
+_translator = GoogleTranslator(source="zh-CN", target="ru")
+
+# Russian stopwords for wb_keyword extraction
+_RU_STOPWORDS = frozenset(
+    "для с и в на от из по к о не без при до через под над "
+    "новый новая новое новые мини портативный портативная".split()
+)
 
 
 def _translate(text: str) -> str:
@@ -42,161 +48,196 @@ def _translate(text: str) -> str:
     if not text:
         return ""
     try:
-        return translator.translate(text)
+        return _translator.translate(text)
     except Exception:
         return text
 
 
-class Collector1688(BaseCollector):
-    """Collects trending products from 1688.com."""
+def _parse_price(value) -> float:
+    """Parse price from various formats: float, string, range."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return 0.0
+    text = value.replace("¥", "").replace(",", "").replace(" ", "")
+    try:
+        return float(re.split(r"[-~]", text)[0].strip())
+    except (ValueError, IndexError):
+        return 0.0
 
-    def __init__(self) -> None:
-        self.base_url = "https://s.1688.com/selloffer/offer_search.htm"
+
+def _parse_sales(value) -> int:
+    """Parse sales from various formats: int, '1234笔', '5.2万笔'."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if not isinstance(value, str):
+        return 0
+    text = value.replace(",", "").replace(" ", "")
+    m = re.search(r"([\d.]+)万", text)
+    if m:
+        return int(float(m.group(1)) * 10000)
+    m = re.search(r"(\d+)", text)
+    if m:
+        return int(m.group(1))
+    return 0
+
+
+def _extract_wb_keyword(title_ru: str) -> str:
+    """Extract a short WB search keyword from Russian product title."""
+    words = [
+        w for w in title_ru.lower().split()
+        if w not in _RU_STOPWORDS and len(w) > 2
+    ]
+    return " ".join(words[:3])
+
+
+class Collector1688(BaseCollector):
+    """Collects trending products from 1688.com via Apify API."""
 
     async def collect(self, category: str, limit: int = 20) -> list[RawProduct]:
         keyword = CATEGORY_KEYWORDS.get(category, category)
-        logger.info("Collecting from 1688: category='{}', keyword='{}'", category, keyword)
+        logger.info("Collecting from 1688 (Apify): category='{}', keyword='{}'", category, keyword)
 
-        products: list[RawProduct] = []
+        if not APIFY_API_TOKEN:
+            logger.error("APIFY_API_TOKEN not set — cannot collect from 1688")
+            return []
+
         try:
-            products = await self._search(keyword, limit)
+            items = await self._run_actor(keyword, limit)
         except Exception as e:
-            logger.error("Failed to collect from 1688: {}", e)
+            logger.error("Apify actor failed: {}", e)
+            return []
+
+        if not items:
+            logger.warning("Apify returned no results for '{}'", keyword)
+            return []
+
+        products = []
+        for item in items[:limit]:
+            try:
+                product = self._map_item(item, category)
+                if product:
+                    products.append(product)
+            except Exception as e:
+                logger.debug("Skipping item: {}", e)
+                continue
+
+            # Delay between Google Translate calls
+            await asyncio.sleep(0.5)
 
         logger.info("Collected {} products for '{}'", len(products), category)
         return products
 
-    async def _search(self, keyword: str, limit: int) -> list[RawProduct]:
-        """Search 1688 and parse results."""
-        params = {
-            "keywords": keyword,
-            "sortType": "va_sales",  # sort by sales volume
-            "button_click": "top",
-            "n": "y",
-        }
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    async def _run_actor(self, keyword: str, limit: int) -> list[dict]:
+        """Run the Apify 1688 search actor and return results."""
+        from apify_client import ApifyClient
+
+        client = ApifyClient(APIFY_API_TOKEN)
+
+        actor_input = {
+            "keyword": keyword,
+            "maxItems": limit,
         }
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.get(self.base_url, params=params, headers=headers)
-            resp.raise_for_status()
+        logger.debug("Running Apify actor '{}' with keyword '{}'", APIFY_1688_ACTOR_ID, keyword)
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        return self._parse_search_results(soup, limit)
+        # Run in executor to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        run = await loop.run_in_executor(
+            None,
+            lambda: client.actor(APIFY_1688_ACTOR_ID).call(
+                run_input=actor_input,
+                timeout_secs=120,
+            ),
+        )
 
-    def _parse_search_results(self, soup: BeautifulSoup, limit: int) -> list[RawProduct]:
-        """Parse product cards from 1688 search results page."""
-        products: list[RawProduct] = []
+        # Fetch results from the default dataset
+        dataset_items = client.dataset(run["defaultDatasetId"]).list_items().items
+        logger.debug("Apify returned {} items", len(dataset_items))
+        return dataset_items
 
-        # 1688 renders product cards in divs with offer data
-        # The structure changes periodically — we try multiple selectors
-        cards = soup.select("div[data-offer-id]")
-        if not cards:
-            cards = soup.select(".sm-offer-item")
-        if not cards:
-            cards = soup.select('[class*="offer"]')
-            cards = [c for c in cards if c.find("a", href=True)]
-
-        logger.debug("Found {} raw cards on page", len(cards))
-
-        for card in cards[:limit]:
-            try:
-                product = self._parse_card(card)
-                if product:
-                    products.append(product)
-            except Exception as e:
-                logger.debug("Skipping card: {}", e)
-                continue
-
-            # Delay between translations
-            if products:
-                asyncio.get_event_loop()  # just to keep async context
-                import time
-                time.sleep(0.3)
-
-        return products
-
-    def _parse_card(self, card) -> RawProduct | None:
-        """Parse a single product card."""
-        # Title
-        title_el = card.select_one("a[title]") or card.select_one(".title a")
-        if not title_el:
-            return None
-        title_cn = title_el.get("title", "") or title_el.get_text(strip=True)
+    def _map_item(self, item: dict, category: str) -> RawProduct | None:
+        """Map Apify JSON item to RawProduct."""
+        # Extract title (try common field names)
+        title_cn = (
+            item.get("title", "")
+            or item.get("offerTitle", "")
+            or item.get("name", "")
+        )
         if not title_cn:
             return None
 
-        # URL
-        href = title_el.get("href", "")
-        if href and not href.startswith("http"):
-            href = "https:" + href
-        if not href:
+        # Extract URL
+        source_url = (
+            item.get("detailUrl", "")
+            or item.get("url", "")
+            or item.get("offerUrl", "")
+            or item.get("link", "")
+        )
+        if source_url and not source_url.startswith("http"):
+            source_url = "https:" + source_url
+        if not source_url:
             return None
 
         # Price
-        price_text = ""
-        price_el = card.select_one(".sm-offer-priceNum") or card.select_one('[class*="price"]')
-        if price_el:
-            price_text = price_el.get_text(strip=True).replace("¥", "").replace(",", "")
-        price_cny = 0.0
-        try:
-            # Handle range prices like "12.5 - 18.0" — take the lower
-            price_cny = float(price_text.split("-")[0].split("~")[0].strip())
-        except (ValueError, IndexError):
-            pass
+        price_cny = _parse_price(
+            item.get("price", 0)
+            or item.get("priceRange", "")
+            or item.get("originalPrice", 0)
+        )
 
-        # Sales volume
-        sales_text = ""
-        sales_el = card.select_one('[class*="sale"]') or card.select_one('[class*="deal"]')
-        if sales_el:
-            sales_text = sales_el.get_text(strip=True)
-        sales_volume = self._parse_sales(sales_text)
+        # Sales
+        sales_volume = _parse_sales(
+            item.get("monthSales", 0)
+            or item.get("totalSales", 0)
+            or item.get("sales", 0)
+            or item.get("repurchaseRate", 0)
+        )
+
+        # Supplier info
+        supplier_name = (
+            item.get("shopName", "")
+            or item.get("companyName", "")
+            or item.get("supplier", "")
+        )
+        supplier_years = int(item.get("shopYears", 0) or item.get("years", 0) or 0)
+        rating = float(item.get("rating", 0) or item.get("score", 0) or 0)
 
         # Image
-        img_el = card.select_one("img[src]") or card.select_one("img[data-src]")
-        image_url = ""
-        if img_el:
-            image_url = img_el.get("data-src") or img_el.get("src") or ""
-            if image_url and not image_url.startswith("http"):
-                image_url = "https:" + image_url
+        image_url = (
+            item.get("imageUrl", "")
+            or item.get("image", "")
+            or item.get("imgUrl", "")
+        )
+        if image_url and not image_url.startswith("http"):
+            image_url = "https:" + image_url
 
-        # Supplier
-        supplier_el = card.select_one('[class*="company"]') or card.select_one('[class*="supplier"]')
-        supplier_name = supplier_el.get_text(strip=True) if supplier_el else ""
+        # Min order
+        min_order = int(item.get("minOrder", 1) or item.get("quantityBegin", 1) or 1)
 
         # Translate title
         title_ru = _translate(title_cn)
 
+        # Generate WB keyword from Russian title
+        wb_keyword = _extract_wb_keyword(title_ru)
+
         return RawProduct(
             source="1688",
-            source_url=href,
+            source_url=source_url,
             title_cn=title_cn,
             title_ru=title_ru,
-            category="",
+            category=category,
             price_cny=price_cny,
-            min_order=1,
+            min_order=min_order,
             sales_volume=sales_volume,
             sales_trend=0.0,
-            rating=0.0,
+            rating=rating,
             supplier_name=supplier_name,
-            supplier_years=0,
+            supplier_years=supplier_years,
             image_url=image_url,
+            wb_keyword=wb_keyword,
+            wb_est_price=0.0,
+            collected_at=datetime.now(timezone.utc),
         )
-
-    @staticmethod
-    def _parse_sales(text: str) -> int:
-        """Parse sales volume from text like '1234笔' or '5.2万笔'."""
-        import re
-        text = text.replace(",", "").replace(" ", "")
-        # Try 万 (10k) format
-        m = re.search(r"([\d.]+)万", text)
-        if m:
-            return int(float(m.group(1)) * 10000)
-        # Try plain number
-        m = re.search(r"(\d+)", text)
-        if m:
-            return int(m.group(1))
-        return 0

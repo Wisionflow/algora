@@ -20,6 +20,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
+# Apify (1688.com data)
+APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
+APIFY_1688_ACTOR_ID = os.getenv("APIFY_1688_ACTOR_ID", "songd/1688-search-scraper")
+
 # Database
 DB_PATH = DATA_DIR / "algora.db"
 

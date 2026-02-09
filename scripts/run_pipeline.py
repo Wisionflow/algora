@@ -27,6 +27,7 @@ from loguru import logger
 
 from src.collect.alibaba_1688 import Collector1688
 from src.collect.demo_source import DemoCollector
+from src.collect.json_file_source import JsonFileCollector
 from src.collect.wb_analytics import get_wb_market_data
 from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
@@ -56,12 +57,21 @@ async def run(
 
     # --- STEP 1: COLLECT ---
     logger.info("--- Step 1: COLLECT ---")
-    if source == "demo":
-        collector = DemoCollector()
-    else:
-        collector = Collector1688()
+    raw_products = []
 
-    raw_products = await collector.collect(category=category, limit=20)
+    if source == "demo":
+        raw_products = await DemoCollector().collect(category=category, limit=20)
+    elif source == "1688":
+        # Cascading fallback: Apify → JSON cache → demo
+        raw_products = await Collector1688().collect(category=category, limit=20)
+        if not raw_products:
+            logger.warning("Apify returned nothing, trying JSON cache...")
+            raw_products = await JsonFileCollector().collect(category=category, limit=20)
+        if not raw_products:
+            logger.warning("JSON cache empty, falling back to demo data...")
+            raw_products = await DemoCollector().collect(category=category, limit=20)
+    elif source == "cache":
+        raw_products = await JsonFileCollector().collect(category=category, limit=20)
 
     if not raw_products:
         logger.warning("No products collected.")
@@ -199,8 +209,8 @@ def main() -> None:
     parser.add_argument(
         "--source",
         default="demo",
-        choices=["demo", "1688"],
-        help="Data source (default: demo)",
+        choices=["demo", "1688", "cache"],
+        help="Data source: demo, 1688 (Apify with fallback), cache (local JSON)",
     )
     parser.add_argument(
         "--dry-run",
