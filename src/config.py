@@ -22,7 +22,7 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
 # Apify (1688.com data)
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
-APIFY_1688_ACTOR_ID = os.getenv("APIFY_1688_ACTOR_ID", "songd/1688-search-scraper")
+APIFY_1688_ACTOR_ID = os.getenv("APIFY_1688_ACTOR_ID", "devcake/1688-com-products-scraper")
 
 # Database
 DB_PATH = DATA_DIR / "algora.db"

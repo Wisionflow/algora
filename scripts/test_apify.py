@@ -29,7 +29,7 @@ load_dotenv()
 
 def main(keyword: str = "电子产品 爆款", limit: int = 3):
     token = os.getenv("APIFY_API_TOKEN", "")
-    actor_id = os.getenv("APIFY_1688_ACTOR_ID", "songd/1688-search-scraper")
+    actor_id = os.getenv("APIFY_1688_ACTOR_ID", "devcake/1688-com-products-scraper")
 
     if not token:
         print("ERROR: APIFY_API_TOKEN not set in .env")
@@ -48,8 +48,8 @@ def main(keyword: str = "电子产品 爆款", limit: int = 3):
     print("Running actor (this may take 30-90 seconds)...")
     try:
         run = client.actor(actor_id).call(
-            run_input={"keyword": keyword, "maxItems": limit},
-            timeout_secs=120,
+            run_input={"queries": [keyword], "maxItems": limit},
+            timeout_secs=180,
         )
     except Exception as e:
         print(f"ERROR: Actor failed: {e}")

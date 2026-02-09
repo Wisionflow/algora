@@ -36,10 +36,18 @@ CATEGORY_KEYWORDS: dict[str, str] = {
 
 _translator = GoogleTranslator(source="zh-CN", target="ru")
 
-# Russian stopwords for wb_keyword extraction
-_RU_STOPWORDS = frozenset(
-    "для с и в на от из по к о не без при до через под над "
-    "новый новая новое новые мини портативный портативная".split()
+# Short exact stopwords (prepositions, particles)
+_RU_STOP_EXACT = frozenset(
+    "для с и в на от из по к о не без при до через под над хит мини".split()
+)
+
+# Stem prefixes for Chinese marketing jargon — matches any word starting with these
+_RU_JUNK_STEMS = (
+    "трансгранич", "популярн", "креативн", "интернет-знаменитост",
+    "продаж", "фабрик", "оптов", "красив", "уникальн",
+    "европейск", "британск", "американск", "стандартн",
+    "интеллектуальн", "продаваем", "горяч", "товар",
+    "продукт", "новых", "новый", "новая", "новое", "новые",
 )
 
 
@@ -84,11 +92,55 @@ def _parse_sales(value) -> int:
     return 0
 
 
+def _trim_title(title_ru: str, max_words: int = 10) -> str:
+    """Trim translated title: strip marketing jargon prefixes, limit length."""
+    cleaned = title_ru
+    # Remove leading marketing jargon — apply repeatedly to catch stacked prefixes
+    junk_prefixes = [
+        r"^прямые продажи с фабрики\s*",
+        r"^трансграничн\w*\s+(горяч\w*\s+продаж\w*|хит\s+продаж|товар\w*)\s*",
+        r"^трансграничн\w*\s*",
+        r"^хит\s+продаж[,.\s]*",
+        r"^интернет-знаменитости[,.\s]*",
+        r"^горяч\w*\s+",
+        r"^креативн\w*\s+",
+        r"^популярн\w*\s+",
+        r"^британск\w*\s+стандартн\w*\s*",
+        r"^европейск\w*\s+стандартн\w*\s*",
+        r"^американск\w*\s+стандартн\w*\s*",
+    ]
+    for _ in range(3):  # repeat to catch stacked junk
+        prev = cleaned
+        for pattern in junk_prefixes:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        if cleaned == prev:
+            break
+    # Remove leading commas/dots left after cleanup
+    cleaned = cleaned.lstrip(",. ")
+    # Capitalize first letter
+    if cleaned:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    # Trim to max words
+    words = cleaned.split()
+    if len(words) > max_words:
+        cleaned = " ".join(words[:max_words])
+    return cleaned
+
+
+def _is_junk_word(word: str) -> bool:
+    """Check if a word is a stopword or matches a junk stem."""
+    if word in _RU_STOP_EXACT:
+        return True
+    return any(word.startswith(stem) for stem in _RU_JUNK_STEMS)
+
+
 def _extract_wb_keyword(title_ru: str) -> str:
     """Extract a short WB search keyword from Russian product title."""
+    # Remove punctuation and digits-only tokens
+    cleaned = re.sub(r"[,.()\[\]{}\"/\\!?;:]+", " ", title_ru.lower())
     words = [
-        w for w in title_ru.lower().split()
-        if w not in _RU_STOPWORDS and len(w) > 2
+        w for w in cleaned.split()
+        if not _is_junk_word(w) and len(w) > 2 and not w.isdigit()
     ]
     return " ".join(words[:3])
 
@@ -137,7 +189,7 @@ class Collector1688(BaseCollector):
         client = ApifyClient(APIFY_API_TOKEN)
 
         actor_input = {
-            "keyword": keyword,
+            "queries": [keyword],
             "maxItems": limit,
         }
 
@@ -149,7 +201,7 @@ class Collector1688(BaseCollector):
             None,
             lambda: client.actor(APIFY_1688_ACTOR_ID).call(
                 run_input=actor_input,
-                timeout_secs=120,
+                timeout_secs=180,
             ),
         )
 
@@ -159,66 +211,66 @@ class Collector1688(BaseCollector):
         return dataset_items
 
     def _map_item(self, item: dict, category: str) -> RawProduct | None:
-        """Map Apify JSON item to RawProduct."""
-        # Extract title (try common field names)
-        title_cn = (
-            item.get("title", "")
-            or item.get("offerTitle", "")
-            or item.get("name", "")
-        )
+        """Map Apify JSON item to RawProduct (devcake/1688-com-products-scraper format)."""
+        title_cn = item.get("title", "")
         if not title_cn:
             return None
 
-        # Extract URL
-        source_url = (
-            item.get("detailUrl", "")
-            or item.get("url", "")
-            or item.get("offerUrl", "")
-            or item.get("link", "")
-        )
+        # URL
+        source_url = item.get("detail_url", "") or item.get("detailUrl", "")
         if source_url and not source_url.startswith("http"):
             source_url = "https:" + source_url
         if not source_url:
             return None
 
-        # Price
-        price_cny = _parse_price(
-            item.get("price", 0)
-            or item.get("priceRange", "")
-            or item.get("originalPrice", 0)
-        )
+        # Price — try multiple sources: integer+decimal, price string, quantity_prices
+        price_cny = 0.0
+        if item.get("price_integer") is not None:
+            try:
+                price_cny = float(str(item["price_integer"]) + str(item.get("price_decimal", "")))
+            except (ValueError, TypeError):
+                price_cny = 0.0
+        if price_cny == 0.0:
+            price_cny = _parse_price(item.get("price", 0))
+        # Fallback: take price from quantity_prices list
+        if price_cny == 0.0:
+            qty_list = item.get("quantity_prices", [])
+            if qty_list and isinstance(qty_list, list):
+                price_cny = _parse_price(qty_list[0].get("price", 0))
 
-        # Sales
-        sales_volume = _parse_sales(
-            item.get("monthSales", 0)
-            or item.get("totalSales", 0)
-            or item.get("sales", 0)
-            or item.get("repurchaseRate", 0)
-        )
+        # Sales from order_count
+        sales_volume = _parse_sales(item.get("order_count", 0))
 
         # Supplier info
-        supplier_name = (
-            item.get("shopName", "")
-            or item.get("companyName", "")
-            or item.get("supplier", "")
-        )
-        supplier_years = int(item.get("shopYears", 0) or item.get("years", 0) or 0)
-        rating = float(item.get("rating", 0) or item.get("score", 0) or 0)
+        supplier_name = item.get("shop_name", "") or item.get("shopName", "")
+        supplier_years = 0
+        rating = 0.0
+
+        # Repurchase rate as a proxy for reliability (e.g. "33%" -> 3.3)
+        repurchase = item.get("repurchase_rate", "")
+        if isinstance(repurchase, str) and "%" in repurchase:
+            try:
+                rating = float(repurchase.replace("%", "")) / 10.0
+            except ValueError:
+                pass
 
         # Image
-        image_url = (
-            item.get("imageUrl", "")
-            or item.get("image", "")
-            or item.get("imgUrl", "")
-        )
+        image_url = item.get("image_url", "") or item.get("imageUrl", "")
         if image_url and not image_url.startswith("http"):
             image_url = "https:" + image_url
 
-        # Min order
-        min_order = int(item.get("minOrder", 1) or item.get("quantityBegin", 1) or 1)
+        # Min order from quantity_prices
+        min_order = 1
+        qty_prices = item.get("quantity_prices", [])
+        if qty_prices and isinstance(qty_prices, list):
+            qty_str = qty_prices[0].get("quantity", "")
+            m = re.search(r"(\d+)", str(qty_str))
+            if m:
+                min_order = int(m.group(1))
 
-        # Translate title
+        # Translate title and trim to reasonable length
         title_ru = _translate(title_cn)
+        title_ru = _trim_title(title_ru)
 
         # Generate WB keyword from Russian title
         wb_keyword = _extract_wb_keyword(title_ru)
