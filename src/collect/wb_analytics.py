@@ -8,6 +8,7 @@ Uses a persistent session and retry with exponential backoff for rate limits (42
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 from loguru import logger
@@ -15,7 +16,14 @@ from loguru import logger
 _EMPTY = {"avg_price": 0, "competitors": 0, "min_price": 0, "max_price": 0, "image_url": "", "product_url": ""}
 
 MAX_RETRIES = 3
-BASE_DELAY = 5.0  # seconds before first retry
+BASE_DELAY = 8.0  # seconds before first retry
+MIN_REQUEST_GAP = 10.0  # minimum seconds between any WB requests
+
+# Module-level rate limiter
+_last_request_at: float = 0.0
+
+# In-memory cache for WB results (avoid duplicate queries)
+_wb_cache: dict[str, dict] = {}
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -96,6 +104,11 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
     if not search_term:
         return _EMPTY
 
+    # Check cache to avoid duplicate WB requests
+    if search_term in _wb_cache:
+        logger.debug("WB cache hit for '{}'", search_term)
+        return _wb_cache[search_term]
+
     url = "https://search.wb.ru/exactmatch/ru/common/v7/search"
     params = {
         "ab_testing": "false",
@@ -110,8 +123,17 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
 
     client = await _get_client()
 
+    global _last_request_at
+
     for attempt in range(MAX_RETRIES):
+        # Enforce minimum gap between any WB requests
+        now = time.monotonic()
+        wait = MIN_REQUEST_GAP - (now - _last_request_at)
+        if wait > 0:
+            await asyncio.sleep(wait)
+
         try:
+            _last_request_at = time.monotonic()
             resp = await client.get(url, params=params)
 
             if resp.status_code == 429:
@@ -128,15 +150,18 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
 
         except httpx.HTTPStatusError:
             logger.warning("WB HTTP error for '{}'", search_term)
+            _wb_cache[search_term] = _EMPTY
             return _EMPTY
         except Exception as e:
             logger.warning("WB request failed for '{}': {}", search_term, e)
+            _wb_cache[search_term] = _EMPTY
             return _EMPTY
 
         # Parse response
         products = data.get("data", {}).get("products", [])
         if not products:
             logger.debug("WB: no results for '{}'", search_term)
+            _wb_cache[search_term] = _EMPTY
             return _EMPTY
 
         prices = []
@@ -146,6 +171,7 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
                 prices.append(sale_price)
 
         if not prices:
+            _wb_cache[search_term] = _EMPTY
             return _EMPTY
 
         # Extract image and product page URL from the top result
@@ -165,8 +191,10 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
             "WB '{}': avg={}r, {} competitors",
             search_term, result["avg_price"], result["competitors"],
         )
+        _wb_cache[search_term] = result
         return result
 
     # All retries exhausted
     logger.warning("WB: all retries exhausted for '{}'", search_term)
+    _wb_cache[search_term] = _EMPTY
     return _EMPTY

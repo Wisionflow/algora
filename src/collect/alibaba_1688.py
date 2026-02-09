@@ -36,9 +36,10 @@ CATEGORY_KEYWORDS: dict[str, str] = {
 
 _translator = GoogleTranslator(source="zh-CN", target="ru")
 
-# Short exact stopwords (prepositions, particles)
+# Short exact stopwords (prepositions, particles, connectors)
 _RU_STOP_EXACT = frozenset(
-    "для с и в на от из по к о не без при до через под над хит мини".split()
+    "для с и в на от из по к о не без при до через под над хит мини "
+    "все это тот эта как что где или его".split()
 )
 
 # Stem prefixes for Chinese marketing jargon — matches any word starting with these
@@ -48,6 +49,10 @@ _RU_JUNK_STEMS = (
     "европейск", "британск", "американск", "стандартн",
     "интеллектуальн", "продаваем", "горяч", "товар",
     "продукт", "новых", "новый", "новая", "новое", "новые",
+    "подходит", "подходящ", "применяет", "применим",
+    "бестселлер", "считанн", "модн", "классическ",
+    "второ", "изменени", "однотонн", "волнист",
+    "готов", "прямые", "заводск",
 )
 
 
@@ -135,14 +140,24 @@ def _is_junk_word(word: str) -> bool:
 
 
 def _extract_wb_keyword(title_ru: str) -> str:
-    """Extract a short WB search keyword from Russian product title."""
-    # Remove punctuation and digits-only tokens
+    """Extract a short WB search keyword from Russian product title.
+
+    Strategy: take first 2 unique meaningful words as they appear in the title,
+    preserving natural Russian word order (e.g. "стиральная машина", not "машина").
+    """
     cleaned = re.sub(r"[,.()\[\]{}\"/\\!?;:]+", " ", title_ru.lower())
-    words = [
-        w for w in cleaned.split()
-        if not _is_junk_word(w) and len(w) > 2 and not w.isdigit()
-    ]
-    return " ".join(words[:3])
+    seen = set()
+    result = []
+
+    for w in cleaned.split():
+        if w in seen or len(w) <= 2 or w.isdigit() or _is_junk_word(w):
+            continue
+        seen.add(w)
+        result.append(w)
+        if len(result) >= 2:
+            break
+
+    return " ".join(result)
 
 
 class Collector1688(BaseCollector):
@@ -267,6 +282,11 @@ class Collector1688(BaseCollector):
             m = re.search(r"(\d+)", str(qty_str))
             if m:
                 min_order = int(m.group(1))
+
+        # Skip products with no price — useless for analysis
+        if price_cny <= 0:
+            logger.debug("Skipping item with price=0: {}", title_cn[:40])
+            return None
 
         # Translate title and trim to reasonable length
         title_ru = _translate(title_cn)

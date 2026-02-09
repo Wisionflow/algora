@@ -42,6 +42,23 @@ from src.db import (
 )
 from src.models import AnalyzedProduct
 
+# Fallback WB average prices by category (when WB API is unavailable)
+# Based on typical marketplace pricing for each product type
+_CATEGORY_WB_FALLBACK: dict[str, tuple[float, int]] = {
+    # (avg_price_rub, estimated_competitors)
+    "electronics": (3500, 40),
+    "gadgets": (2000, 35),
+    "home": (1500, 50),
+    "phone_accessories": (800, 60),
+    "car_accessories": (1200, 30),
+    "led_lighting": (900, 40),
+    "beauty_devices": (2500, 25),
+    "smart_home": (2000, 30),
+    "outdoor": (1800, 35),
+    "toys": (1000, 50),
+    "health": (2000, 30),
+}
+
 
 async def run(
     category: str = "electronics",
@@ -97,13 +114,26 @@ async def run(
         search_query = raw.title_ru[:50] if raw.title_ru else raw.title_cn[:30]
         wb_data = await get_wb_market_data(search_query, keyword=raw.wb_keyword)
 
-        # If WB API failed, use estimated fallback price
+        # If WB API failed, use fallback pricing
         wb_price = wb_data["avg_price"]
         wb_comps = wb_data["competitors"]
-        if wb_price == 0 and raw.wb_est_price > 0:
-            wb_price = raw.wb_est_price
-            wb_comps = 30  # assume moderate competition as fallback
-            logger.debug("Using fallback WB price: {}r", wb_price)
+        if wb_price == 0:
+            if raw.wb_est_price > 0:
+                wb_price = raw.wb_est_price
+                wb_comps = 30
+            else:
+                # Estimate WB price from landed cost with typical marketplace markup
+                from src.analyze.scoring import estimate_costs
+                landed = estimate_costs(raw)["total_landed_cost"]
+                if landed > 0:
+                    # Typical WB markup: 2.5-4x landed cost
+                    wb_price = round(landed * 3.0, 2)
+                else:
+                    # Last resort: use category-based fallback
+                    fallback = _CATEGORY_WB_FALLBACK.get(raw.category, (1500, 35))
+                    wb_price = fallback[0]
+                wb_comps = _CATEGORY_WB_FALLBACK.get(raw.category, (1500, 35))[1]
+            logger.debug("Using fallback WB price: {}r (category: {})", wb_price, raw.category)
 
         # Never use WB images — audience will recognize them as fake
         # Keep original Chinese source_url — that's the value for the audience
@@ -126,8 +156,8 @@ async def run(
             product.margin_pct,
         )
 
-        # Delay to avoid WB rate limits (429)
-        await asyncio.sleep(5.0)
+        # Small delay between products (WB rate limiting is handled in wb_analytics)
+        await asyncio.sleep(1.0)
 
     if not analyzed:
         logger.warning("No new products to analyze.")
