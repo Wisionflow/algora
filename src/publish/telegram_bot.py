@@ -12,6 +12,8 @@ from src.models import TelegramPost
 async def send_post(post: TelegramPost) -> TelegramPost:
     """Send a post to the Telegram channel.
 
+    Uses sendPhoto if image_url is available (caption limit 1024 chars),
+    falls back to sendMessage for text-only posts or long captions.
     Returns the post with updated published status and message_id.
     """
     if not TELEGRAM_BOT_TOKEN:
@@ -22,27 +24,48 @@ async def send_post(post: TelegramPost) -> TelegramPost:
         logger.error("TELEGRAM_CHANNEL_ID not set")
         return post
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHANNEL_ID,
-        "text": post.text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False,
-    }
+    use_photo = bool(post.image_url) and len(post.text) <= 1024
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(url, json=payload)
+        async with httpx.AsyncClient(timeout=30) as client:
+            if use_photo:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                payload = {
+                    "chat_id": TELEGRAM_CHANNEL_ID,
+                    "photo": post.image_url,
+                    "caption": post.text,
+                    "parse_mode": "HTML",
+                }
+                resp = await client.post(url, json=payload)
+
+                # If sendPhoto fails (e.g. image URL broken), fall back to sendMessage
+                if resp.status_code != 200 or not resp.json().get("ok"):
+                    logger.warning(
+                        "sendPhoto failed, falling back to sendMessage: {}",
+                        resp.json().get("description", "unknown"),
+                    )
+                    use_photo = False
+
+            if not use_photo:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                payload = {
+                    "chat_id": TELEGRAM_CHANNEL_ID,
+                    "text": post.text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False,
+                }
+                resp = await client.post(url, json=payload)
+
             resp.raise_for_status()
             data = resp.json()
 
         if data.get("ok"):
             post.published = True
             post.message_id = data["result"]["message_id"]
+            method = "photo" if use_photo else "text"
             logger.info(
-                "Published to {} (message_id={})",
-                TELEGRAM_CHANNEL_ID,
-                post.message_id,
+                "Published ({}) to {} (message_id={})",
+                method, TELEGRAM_CHANNEL_ID, post.message_id,
             )
         else:
             logger.error("Telegram API error: {}", data.get("description"))

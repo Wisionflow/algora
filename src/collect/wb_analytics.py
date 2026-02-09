@@ -12,7 +12,7 @@ import asyncio
 import httpx
 from loguru import logger
 
-_EMPTY = {"avg_price": 0, "competitors": 0, "min_price": 0, "max_price": 0}
+_EMPTY = {"avg_price": 0, "competitors": 0, "min_price": 0, "max_price": 0, "image_url": "", "product_url": ""}
 
 MAX_RETRIES = 3
 BASE_DELAY = 5.0  # seconds before first retry
@@ -28,6 +28,49 @@ _HEADERS = {
 
 # Module-level persistent client (reuse connections)
 _client: httpx.AsyncClient | None = None
+
+
+def _wb_image_url(product_id: int) -> str:
+    """Construct WB CDN image URL from product ID."""
+    vol = product_id // 100000
+    part = product_id // 1000
+    if vol <= 143:
+        basket = "01"
+    elif vol <= 287:
+        basket = "02"
+    elif vol <= 431:
+        basket = "03"
+    elif vol <= 719:
+        basket = "04"
+    elif vol <= 1007:
+        basket = "05"
+    elif vol <= 1061:
+        basket = "06"
+    elif vol <= 1115:
+        basket = "07"
+    elif vol <= 1169:
+        basket = "08"
+    elif vol <= 1313:
+        basket = "09"
+    elif vol <= 1601:
+        basket = "10"
+    elif vol <= 1655:
+        basket = "11"
+    elif vol <= 1919:
+        basket = "12"
+    elif vol <= 2045:
+        basket = "13"
+    elif vol <= 2189:
+        basket = "14"
+    elif vol <= 2405:
+        basket = "15"
+    elif vol <= 2621:
+        basket = "16"
+    elif vol <= 2837:
+        basket = "17"
+    else:
+        basket = "18"
+    return f"https://basket-{basket}.wbbasket.ru/vol{vol}/part{part}/{product_id}/images/big/1.webp"
 
 
 async def _get_client() -> httpx.AsyncClient:
@@ -105,11 +148,18 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
         if not prices:
             return _EMPTY
 
+        # Extract image and product page URL from the top result
+        top_id = products[0].get("id", 0)
+        image_url = _wb_image_url(top_id) if top_id else ""
+        product_url = f"https://www.wildberries.ru/catalog/{top_id}/detail.aspx" if top_id else ""
+
         result = {
             "avg_price": round(sum(prices) / len(prices), 2),
             "competitors": len(products),
             "min_price": min(prices),
             "max_price": max(prices),
+            "image_url": image_url,
+            "product_url": product_url,
         }
         logger.debug(
             "WB '{}': avg={}r, {} competitors",

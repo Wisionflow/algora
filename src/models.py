@@ -65,6 +65,7 @@ class TelegramPost(BaseModel):
 
     product: AnalyzedProduct
     text: str
+    image_url: str = ""
     published: bool = False
     published_at: Optional[datetime] = None
     message_id: Optional[int] = None
