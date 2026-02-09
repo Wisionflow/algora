@@ -95,12 +95,8 @@ async def run(
             wb_comps = 30  # assume moderate competition as fallback
             logger.debug("Using fallback WB price: {}r", wb_price)
 
-        # Set image URL from WB if available
-        if wb_data.get("image_url"):
-            raw.image_url = wb_data["image_url"]
-        # Update source_url to actual WB product page if available
-        if wb_data.get("product_url"):
-            raw.source_url = wb_data["product_url"]
+        # Never use WB images — audience will recognize them as fake
+        # Keep original Chinese source_url — that's the value for the audience
 
         # Score the product
         product = analyze_product(

@@ -74,7 +74,7 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
         lines.append(supplier_info)
 
     if r.source_url:
-        lines.append(f'🔗 <a href="{r.source_url}">Поставщик на Alibaba</a>')
+        lines.append(f'🔗 <a href="{r.source_url}">Товар на фабрике (Китай)</a>')
 
     text = "\n".join(lines)
 
