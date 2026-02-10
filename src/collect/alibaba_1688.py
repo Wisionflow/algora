@@ -32,6 +32,11 @@ CATEGORY_KEYWORDS: dict[str, str] = {
     "outdoor": "户外用品 新款",
     "toys": "玩具 爆款 新奇",
     "health": "健康 按摩 爆款",
+    "kitchen": "厨房用品 爆款 小工具",
+    "pet": "宠物用品 爆款 智能",
+    "sport": "运动装备 健身 爆款",
+    "office": "办公用品 创意 桌面",
+    "kids": "儿童用品 益智 爆款",
 }
 
 _translator = GoogleTranslator(source="zh-CN", target="ru")

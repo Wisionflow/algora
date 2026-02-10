@@ -68,6 +68,14 @@ def init_db() -> None:
             message_id INTEGER,
             published_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS channel_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            subscribers INTEGER DEFAULT 0,
+            posts_total INTEGER DEFAULT 0,
+            recorded_at TEXT NOT NULL
+        );
         """
     )
     conn.commit()
@@ -168,5 +176,64 @@ def is_already_published(source_url: str) -> bool:
             "SELECT 1 FROM published_posts WHERE source_url = ?", (source_url,)
         ).fetchone()
         return row is not None
+    finally:
+        conn.close()
+
+
+def save_channel_stats(subscribers: int, posts_total: int) -> None:
+    """Save daily channel statistics snapshot."""
+    conn = get_connection()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO channel_stats
+            (date, subscribers, posts_total, recorded_at)
+            VALUES (?, ?, ?, ?)""",
+            (today, subscribers, posts_total, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_channel_stats_history(days: int = 30) -> list[dict]:
+    """Get channel stats for the last N days."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT date, subscribers, posts_total
+            FROM channel_stats
+            ORDER BY date DESC
+            LIMIT ?""",
+            (days,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_published_posts_count() -> int:
+    """Get total count of published posts."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT COUNT(*) as cnt FROM published_posts").fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def get_top_products(limit: int = 10) -> list[dict]:
+    """Get top analyzed products by score."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT source_url, raw_json, total_score, margin_pct,
+                      wb_avg_price, wb_competitors, ai_insight
+            FROM analyzed_products
+            ORDER BY total_score DESC
+            LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()

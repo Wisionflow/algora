@@ -76,6 +76,27 @@ async def send_post(post: TelegramPost) -> TelegramPost:
     return post
 
 
+async def get_channel_info() -> dict:
+    """Get channel subscriber count and other info."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        return {}
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getChatMemberCount"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={"chat_id": TELEGRAM_CHANNEL_ID})
+            data = resp.json()
+        if data.get("ok"):
+            count = data["result"]
+            logger.info("Channel {} has {} subscribers", TELEGRAM_CHANNEL_ID, count)
+            return {"subscribers": count}
+        else:
+            logger.warning("getChatMemberCount failed: {}", data.get("description"))
+    except Exception as e:
+        logger.error("Failed to get channel info: {}", e)
+    return {}
+
+
 async def test_connection() -> bool:
     """Test if the bot token is valid and can post to the channel."""
     if not TELEGRAM_BOT_TOKEN:

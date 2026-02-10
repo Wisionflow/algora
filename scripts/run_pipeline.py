@@ -57,6 +57,11 @@ _CATEGORY_WB_FALLBACK: dict[str, tuple[float, int]] = {
     "outdoor": (1800, 35),
     "toys": (1000, 50),
     "health": (2000, 30),
+    "kitchen": (1200, 45),
+    "pet": (1800, 35),
+    "sport": (2200, 40),
+    "office": (800, 50),
+    "kids": (1200, 45),
 }
 
 
@@ -233,8 +238,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Algora Pipeline")
     parser.add_argument(
         "--category",
-        default="electronics",
-        help="Product category (default: electronics)",
+        default="all",
+        help="Product category: electronics, gadgets, home, phone_accessories, "
+             "car_accessories, led_lighting, beauty_devices, smart_home, outdoor, "
+             "toys, health, kitchen, pet, sport, office, kids, or 'all' (default: all)",
     )
     parser.add_argument(
         "--source",
