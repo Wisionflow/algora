@@ -1,4 +1,10 @@
-"""Compose Telegram posts from analyzed products."""
+"""Compose Telegram posts from analyzed products.
+
+Post types:
+- compose_post()         — "Находка дня" (single product)
+- compose_niche_review() — "Обзор ниши" (category overview with top products)
+- compose_weekly_top()   — "Топ недели" (best products across all categories)
+"""
 
 from __future__ import annotations
 
@@ -73,11 +79,14 @@ def _score_bar(score: float) -> str:
 
 def _clean_insight(text: str) -> str:
     """Strip markdown artifacts from AI insight."""
-    # Remove **bold** markers
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-    # Remove leading "Инсайт:" prefix
     text = re.sub(r"^[Ии]нсайт\s*:\s*", "", text)
     return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Post type 1: "Находка дня" — single product spotlight
+# ---------------------------------------------------------------------------
 
 
 def compose_post(product: AnalyzedProduct) -> TelegramPost:
@@ -102,7 +111,6 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
 
     lines.append("")
 
-    # Price block — compact
     price_line = f"💰 FOB: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)"
     if r.min_order > 1:
         price_line += f" | от {r.min_order} шт"
@@ -123,7 +131,6 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     if p.margin_pct != 0:
         lines.append(f"• Маржа: ~{p.margin_pct:.0f}% {margin_icon}")
 
-    # Score bar
     lines.append(f"• Рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
 
     if p.ai_insight:
@@ -141,10 +148,104 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     if r.source_url:
         lines.append(f'🔗 <a href="{r.source_url}">Смотреть на фабрике</a>')
 
-    # Hashtags
     lines.append("")
     lines.append(f"{cat_tag} #китай #маркетплейс #wb #ozon")
 
     text = "\n".join(lines)
-
     return TelegramPost(product=product, text=text, image_url=r.image_url)
+
+
+# ---------------------------------------------------------------------------
+# Post type 2: "Обзор ниши" — category overview
+# ---------------------------------------------------------------------------
+
+
+def compose_niche_review(
+    category: str,
+    products: list[AnalyzedProduct],
+    ai_summary: str = "",
+) -> str:
+    """Build a niche review post for a category.
+
+    Returns raw text (not TelegramPost) since it's not tied to one product.
+    """
+    cat_name = CATEGORY_NAMES.get(category, category)
+    cat_tag = CATEGORY_TAGS.get(category, f"#{category}")
+
+    # Aggregate stats
+    avg_margin = sum(p.margin_pct for p in products) / len(products) if products else 0
+    avg_score = sum(p.total_score for p in products) / len(products) if products else 0
+    total_sales = sum(p.raw.sales_volume for p in products)
+    avg_competitors = (
+        sum(p.wb_competitors for p in products) / len(products) if products else 0
+    )
+
+    lines = [
+        f"📊 <b>ALGORA | Обзор ниши: {cat_name}</b>",
+        "",
+        f"Проанализировано товаров: {len(products)}",
+        "",
+        f"📈 <b>Ключевые метрики:</b>",
+        f"• Средняя маржа: ~{avg_margin:.0f}% {_margin_emoji(avg_margin)}",
+        f"• Средний рейтинг: {avg_score:.1f}/10",
+        f"• Суммарные продажи CN: {total_sales:,} шт/мес",
+        f"• Среднее конкурентов на WB: ~{avg_competitors:.0f}",
+    ]
+
+    # Top 3 products
+    top = sorted(products, key=lambda p: p.total_score, reverse=True)[:3]
+    if top:
+        lines.append("")
+        lines.append("🏆 <b>Топ-3 товара:</b>")
+        for i, p in enumerate(top, 1):
+            title = (p.raw.title_ru or p.raw.title_cn)[:45]
+            lines.append(
+                f"{i}. {title}\n"
+                f"   Маржа: {p.margin_pct:.0f}% | {_score_bar(p.total_score)} {p.total_score:.1f}"
+            )
+
+    if ai_summary:
+        summary = _clean_insight(ai_summary)
+        lines.append("")
+        lines.append(f"💡 {summary}")
+
+    lines.append("")
+    lines.append(f"{cat_tag} #обзорниши #китай #маркетплейс #wb #ozon")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Post type 3: "Топ недели" — best products across all categories
+# ---------------------------------------------------------------------------
+
+
+def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
+    """Build a weekly top products post.
+
+    Returns raw text. Takes already-sorted top products.
+    """
+    lines = [
+        "🏆 <b>ALGORA | Топ недели</b>",
+        "",
+        "Лучшие находки за неделю по рейтингу и марже:",
+        "",
+    ]
+
+    for i, p in enumerate(products[:5], 1):
+        title = (p.raw.title_ru or p.raw.title_cn)[:40]
+        cat_name = CATEGORY_NAMES.get(p.raw.category, p.raw.category)
+        margin_icon = _margin_emoji(p.margin_pct)
+
+        lines.append(
+            f"<b>{i}. {title}</b>\n"
+            f"   {cat_name} | Маржа: {p.margin_pct:.0f}% {margin_icon} | "
+            f"{_score_bar(p.total_score)} {p.total_score:.1f}/10"
+        )
+        lines.append("")
+
+    lines.append("Подробный разбор каждого товара — в постах канала выше ☝️")
+    lines.append("")
+    lines.append("#топнедели #китай #маркетплейс #wb #ozon")
+
+    return "\n".join(lines)

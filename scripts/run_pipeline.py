@@ -245,9 +245,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--source",
-        default="demo",
+        default="1688",
         choices=["demo", "1688", "cache"],
-        help="Data source: demo, 1688 (Apify with fallback), cache (local JSON)",
+        help="Data source: 1688 (Apify with fallback, default), demo, cache (local JSON)",
     )
     parser.add_argument(
         "--dry-run",
