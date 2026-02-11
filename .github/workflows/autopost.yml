@@ -1,0 +1,125 @@
+name: Algora Autopost
+
+on:
+  schedule:
+    # Morning post: 07:00 UTC = 10:00 MSK
+    - cron: "0 7 * * *"
+    # Evening post: 15:00 UTC = 18:00 MSK
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      post_type:
+        description: "Post type to run"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - product
+          - niche_review
+          - weekly_top
+          - beginner_mistake
+          - product_of_week
+      dry_run:
+        description: "Dry run (no publish)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore DB cache
+        uses: actions/cache@v4
+        with:
+          path: data/algora.db
+          key: algora-db-${{ github.ref_name }}
+          restore-keys: |
+            algora-db-
+
+      - name: Ensure data dir
+        run: mkdir -p data
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'ENVEOF'
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}
+          APIFY_API_TOKEN=${{ secrets.APIFY_API_TOKEN }}
+          ENVEOF
+
+      - name: Determine post type
+        id: decide
+        run: |
+          POST_TYPE="${{ github.event.inputs.post_type || 'auto' }}"
+          if [ "$POST_TYPE" = "auto" ]; then
+            # Auto-select based on day of week
+            DOW=$(date -u +%u)  # 1=Mon, 7=Sun
+            HOUR=$(date -u +%H)
+            if [ "$DOW" = "7" ] && [ "$HOUR" -ge "14" ]; then
+              # Sunday evening = weekly top
+              POST_TYPE="weekly_top"
+            elif [ "$DOW" = "3" ] && [ "$HOUR" -lt "10" ]; then
+              # Wednesday morning = niche review
+              POST_TYPE="niche_review"
+            elif [ "$DOW" = "5" ] && [ "$HOUR" -lt "10" ]; then
+              # Friday morning = beginner mistake
+              POST_TYPE="beginner_mistake"
+            elif [ "$DOW" = "6" ] && [ "$HOUR" -ge "14" ]; then
+              # Saturday evening = product of week
+              POST_TYPE="product_of_week"
+            else
+              # All other times = regular product post
+              POST_TYPE="product"
+            fi
+          fi
+          echo "post_type=$POST_TYPE" >> "$GITHUB_OUTPUT"
+          echo "Selected post type: $POST_TYPE"
+
+      - name: Run post
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          POST_TYPE="${{ steps.decide.outputs.post_type }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          DRY_FLAG=""
+          if [ "$DRY_RUN" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+
+          case "$POST_TYPE" in
+            product)
+              python -X utf8 -m scripts.run_pipeline --source 1688 --top 1 $DRY_FLAG
+              ;;
+            niche_review)
+              # Pick a random category
+              CATS=("electronics" "gadgets" "home" "phone_accessories" "car_accessories" "led_lighting" "beauty_devices" "smart_home" "outdoor" "toys" "health" "kitchen")
+              CAT=${CATS[$RANDOM % ${#CATS[@]}]}
+              python -X utf8 -m scripts.post_niche_review --category "$CAT" --source 1688 $DRY_FLAG
+              ;;
+            weekly_top)
+              python -X utf8 -m scripts.post_weekly_top $DRY_FLAG
+              ;;
+            beginner_mistake)
+              python -X utf8 -m scripts.post_beginner_mistake --source 1688 $DRY_FLAG
+              ;;
+            product_of_week)
+              python -X utf8 -m scripts.post_product_of_week --source 1688 $DRY_FLAG
+              ;;
+          esac

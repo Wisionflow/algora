@@ -1,9 +1,11 @@
 """Compose Telegram posts from analyzed products.
 
 Post types:
-- compose_post()         — "Находка дня" (single product)
-- compose_niche_review() — "Обзор ниши" (category overview with top products)
-- compose_weekly_top()   — "Топ недели" (best products across all categories)
+- compose_post()              — "Находка дня" (single product)
+- compose_niche_review()      — "Обзор ниши" (category overview with top products)
+- compose_weekly_top()        — "Топ недели" (best products across all categories)
+- compose_beginner_mistake()  — "Ошибка новичка" (educational: common mistake + how to avoid)
+- compose_product_of_week()   — "Товар недели" (deep dive into one best product)
 """
 
 from __future__ import annotations
@@ -247,5 +249,124 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
     lines.append("Подробный разбор каждого товара — в постах канала выше ☝️")
     lines.append("")
     lines.append("#топнедели #китай #маркетплейс #wb #ozon")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Post type 4: "Ошибка новичка" — educational content about common mistakes
+# ---------------------------------------------------------------------------
+
+
+def compose_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> str:
+    """Build a 'beginner mistake' educational post based on a real product.
+
+    Uses AI-generated mistake_text that explains what could go wrong
+    and how to avoid it.
+    Returns raw text.
+    """
+    p = product
+    r = product.raw
+    title = (r.title_ru or r.title_cn)[:50]
+    cat_name = CATEGORY_NAMES.get(r.category, r.category)
+    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+
+    lines = [
+        "⚠️ <b>ALGORA | Ошибка новичка</b>",
+        "",
+        f"Разбираем на примере: <b>{title}</b>",
+        f"📂 {cat_name}",
+        "",
+        f"💰 FOB: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽) → В РФ: ~{p.total_landed_cost:.0f}₽",
+    ]
+
+    if p.wb_avg_price > 0:
+        lines.append(f"📊 WB: ~{p.wb_avg_price:.0f}₽ | {p.wb_competitors} конкурентов")
+
+    lines.append(f"📈 Маржа: ~{p.margin_pct:.0f}% {_margin_emoji(p.margin_pct)}")
+    lines.append("")
+
+    # AI-generated mistake analysis
+    mistake = _clean_insight(mistake_text)
+    lines.append(mistake)
+
+    lines.append("")
+    lines.append("💬 Сталкивались с такой ситуацией? Пишите в комментариях")
+    lines.append("")
+    lines.append(f"{cat_tag} #ошибкановичка #обучение #маркетплейс #wb #ozon")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Post type 5: "Товар недели" — deep-dive into one best product
+# ---------------------------------------------------------------------------
+
+
+def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str:
+    """Build a detailed 'product of the week' post.
+
+    Takes the best product and an AI-generated deep analysis.
+    Returns raw text.
+    """
+    p = product
+    r = product.raw
+    title = r.title_ru or r.title_cn
+    cat_name = CATEGORY_NAMES.get(r.category, r.category)
+    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+
+    lines = [
+        "🏅 <b>ALGORA | Товар недели</b>",
+        "",
+        f"📦 <b>{title}</b>",
+        f"📂 {cat_name}",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "<b>💰 Экономика:</b>",
+        f"• FOB Китай: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)",
+        f"• Доставка + таможня: ~{p.delivery_cost_est + p.customs_duty_est:.0f}₽",
+        f"• Себестоимость в РФ: ~{p.total_landed_cost:.0f}₽",
+        f"• Цена на WB: ~{p.wb_avg_price:.0f}₽",
+        f"• <b>Чистая маржа: ~{p.margin_pct:.0f}% ({p.margin_rub:.0f}₽/шт)</b> {_margin_emoji(p.margin_pct)}",
+    ]
+
+    if r.min_order > 1:
+        invest = r.min_order * p.total_landed_cost
+        lines.append(f"• Мин. вход: {r.min_order} шт × {p.total_landed_cost:.0f}₽ = {invest:,.0f}₽")
+
+    lines.append("")
+    lines.append("<b>📊 Рынок:</b>")
+
+    if r.sales_volume > 0:
+        lines.append(f"• Продажи в Китае: {r.sales_volume:,} шт/мес {_trend_emoji(p.trend_score)}")
+
+    lines.append(f"• Конкуренция на WB: {p.wb_competitors} продавцов")
+    lines.append(f"• Общий рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
+
+    if r.supplier_name:
+        lines.append("")
+        supplier_info = f"<b>🏭 Поставщик:</b> {r.supplier_name}"
+        if r.supplier_years > 0:
+            supplier_info += f" ({r.supplier_years} лет)"
+        lines.append(supplier_info)
+
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("")
+
+    # AI deep analysis
+    analysis = _clean_insight(deep_analysis)
+    lines.append(f"🧠 <b>Экспертный разбор:</b>")
+    lines.append(analysis)
+
+    if r.source_url:
+        lines.append("")
+        lines.append(f'🔗 <a href="{r.source_url}">Смотреть на фабрике</a>')
+
+    lines.append("")
+    lines.append("🔔 Сохрани пост, чтобы не потерять находку!")
+    lines.append("")
+    lines.append(f"{cat_tag} #товарнедели #разбор #китай #маркетплейс #wb #ozon")
 
     return "\n".join(lines)

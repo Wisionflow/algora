@@ -1,7 +1,14 @@
 """Algora Scheduler — automated posting on schedule.
 
 Runs the pipeline automatically at configured times.
-Posts 2 times per day with rotating categories.
+Posts 2 times per day with rotating content types and categories.
+
+Content rotation:
+- Mon-Tue, Thu: "Находка дня" (regular product posts)
+- Wed morning: "Ошибка новичка" (educational)
+- Fri morning: "Обзор ниши" (niche review)
+- Sat evening: "Товар недели" (product of week deep-dive)
+- Sun evening: "Топ недели" (weekly top)
 
 Usage:
     python -X utf8 -m scripts.scheduler              # run scheduler
@@ -29,6 +36,10 @@ import schedule
 from loguru import logger
 
 from scripts.run_pipeline import run as run_pipeline
+from scripts.post_niche_review import post_niche_review
+from scripts.post_weekly_top import post_weekly_top
+from scripts.post_beginner_mistake import post_beginner_mistake
+from scripts.post_product_of_week import post_product_of_week
 from src.db import init_db, save_channel_stats, get_published_posts_count
 from src.publish.telegram_bot import get_channel_info
 
@@ -40,10 +51,8 @@ ALL_CATEGORIES = [
 ]
 
 # Posting schedule (Moscow time = UTC+3)
-# Morning post: 10:00 MSK = 07:00 UTC
-# Evening post: 18:00 MSK = 15:00 UTC
-MORNING_UTC = "07:00"
-EVENING_UTC = "15:00"
+MORNING_UTC = "07:00"  # 10:00 MSK
+EVENING_UTC = "15:00"  # 18:00 MSK
 
 # Track which categories were used recently to avoid repeats
 _recent_categories: list[str] = []
@@ -59,26 +68,66 @@ def _pick_category() -> str:
     cat = random.choice(available)
     _recent_categories.append(cat)
 
-    # Keep only last 8 to allow repeats after a while
     if len(_recent_categories) > 8:
         _recent_categories.pop(0)
 
     return cat
 
 
+def _decide_post_type() -> str:
+    """Decide post type based on day of week and time of day."""
+    now = datetime.utcnow()
+    dow = now.isoweekday()  # 1=Mon, 7=Sun
+    hour = now.hour
+
+    is_morning = hour < 12
+
+    if dow == 3 and is_morning:
+        return "beginner_mistake"  # Wednesday morning
+    if dow == 5 and is_morning:
+        return "niche_review"      # Friday morning
+    if dow == 6 and not is_morning:
+        return "product_of_week"   # Saturday evening
+    if dow == 7 and not is_morning:
+        return "weekly_top"        # Sunday evening
+
+    return "product"  # All other slots
+
+
 def _post_job(source: str = "1688", top_n: int = 1, dry_run: bool = False) -> None:
-    """Run pipeline for a single post."""
+    """Run the appropriate post job based on schedule."""
+    post_type = _decide_post_type()
     category = _pick_category()
     now = datetime.now().strftime("%H:%M:%S")
-    logger.info("=== Scheduler job at {} | category={} source={} ===", now, category, source)
+    logger.info("=== Scheduler job at {} | type={} category={} source={} ===",
+                now, post_type, category, source)
 
     try:
-        asyncio.run(run_pipeline(
-            category=category,
-            dry_run=dry_run,
-            source=source,
-            top_n=top_n,
-        ))
+        if post_type == "product":
+            asyncio.run(run_pipeline(
+                category=category,
+                dry_run=dry_run,
+                source=source,
+                top_n=top_n,
+            ))
+        elif post_type == "niche_review":
+            asyncio.run(post_niche_review(
+                category=category,
+                source=source,
+                dry_run=dry_run,
+            ))
+        elif post_type == "weekly_top":
+            asyncio.run(post_weekly_top(dry_run=dry_run))
+        elif post_type == "beginner_mistake":
+            asyncio.run(post_beginner_mistake(
+                source=source,
+                dry_run=dry_run,
+            ))
+        elif post_type == "product_of_week":
+            asyncio.run(post_product_of_week(
+                source=source,
+                dry_run=dry_run,
+            ))
     except Exception as e:
         logger.error("Scheduler job failed: {}", e)
 
@@ -103,6 +152,7 @@ def run_scheduler(source: str = "1688", dry_run: bool = False) -> None:
     logger.info("=== ALGORA Scheduler START ===")
     logger.info("Schedule: {} UTC (10:00 MSK) and {} UTC (18:00 MSK)", MORNING_UTC, EVENING_UTC)
     logger.info("Source: {} | Dry run: {}", source, dry_run)
+    logger.info("Content rotation: Mon-Tue,Thu=product | Wed=mistake | Fri=niche | Sat=best | Sun=top")
 
     # Schedule jobs
     schedule.every().day.at(MORNING_UTC).do(_post_job, source=source, dry_run=dry_run)
@@ -116,7 +166,6 @@ def run_scheduler(source: str = "1688", dry_run: bool = False) -> None:
     try:
         while True:
             schedule.run_pending()
-            # Check every 30 seconds
             import time
             time.sleep(30)
     except KeyboardInterrupt:
@@ -146,10 +195,8 @@ def main() -> None:
     init_db()
 
     if args.once or args.test:
-        # Single run
         _post_job(source=args.source, top_n=1, dry_run=args.test)
     else:
-        # Continuous scheduler
         run_scheduler(source=args.source, dry_run=False)
 
 
