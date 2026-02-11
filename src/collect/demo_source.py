@@ -14,6 +14,27 @@ from src.models import RawProduct
 
 from .base import BaseCollector
 
+# Category-specific placeholder images
+# Using picsum.photos for reliable Telegram delivery
+CATEGORY_IMAGES: dict[str, str] = {
+    "electronics": "https://picsum.photos/600/600?random=1",
+    "gadgets": "https://picsum.photos/600/600?random=2",
+    "home": "https://picsum.photos/600/600?random=3",
+    "phone_accessories": "https://picsum.photos/600/600?random=4",
+    "car_accessories": "https://picsum.photos/600/600?random=5",
+    "led_lighting": "https://picsum.photos/600/600?random=6",
+    "beauty_devices": "https://picsum.photos/600/600?random=7",
+    "smart_home": "https://picsum.photos/600/600?random=8",
+    "outdoor": "https://picsum.photos/600/600?random=9",
+    "toys": "https://picsum.photos/600/600?random=10",
+    "health": "https://picsum.photos/600/600?random=11",
+    "kitchen": "https://picsum.photos/600/600?random=12",
+    "pet": "https://picsum.photos/600/600?random=13",
+    "sport": "https://picsum.photos/600/600?random=14",
+    "office": "https://picsum.photos/600/600?random=15",
+    "kids": "https://picsum.photos/600/600?random=16",
+}
+
 # Realistic product data based on actual trending items on Chinese marketplaces
 DEMO_PRODUCTS: list[dict] = [
     {
@@ -638,10 +659,15 @@ class DemoCollector(BaseCollector):
 
         products = []
         for item in selected:
+            # Get category-specific image or default
+            cat = item.get("category", "")
+            image_url = CATEGORY_IMAGES.get(cat, CATEGORY_IMAGES.get("electronics", ""))
+
             products.append(
                 RawProduct(
                     source="demo",
                     source_url=item["source_url"],
+                    image_url=image_url,
                     title_cn=item["title_cn"],
                     title_ru=item["title_ru"],
                     category=item.get("category", ""),
