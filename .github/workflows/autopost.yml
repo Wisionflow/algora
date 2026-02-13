@@ -63,7 +63,7 @@ jobs:
           TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}
           APIFY_API_TOKEN=${{ secrets.APIFY_API_TOKEN }}
           VK_API_TOKEN=${{ secrets.VK_API_TOKEN }}
-          VK_GROUP_ID=${{ secrets.VK_GROUP_ID }}
+          VK_GROUP_ID=236000213
           ENVEOF
 
       - name: Determine post type
