@@ -42,6 +42,7 @@ from scripts.post_beginner_mistake import post_beginner_mistake
 from scripts.post_product_of_week import post_product_of_week
 from src.db import init_db, save_channel_stats, get_published_posts_count
 from src.publish.telegram_bot import get_channel_info
+from src.publish.vk_bot import get_group_info
 
 # All available categories for rotation
 ALL_CATEGORIES = [
@@ -145,6 +146,11 @@ async def _save_stats() -> None:
     posts = get_published_posts_count()
     if subscribers > 0:
         save_channel_stats(subscribers, posts)
+
+    # Log VK stats (informational only)
+    vk_info = await get_group_info()
+    if vk_info:
+        logger.info("VK group '{}': {} members", vk_info.get("name", "?"), vk_info.get("members", 0))
 
 
 def run_scheduler(source: str = "1688", dry_run: bool = False) -> None:

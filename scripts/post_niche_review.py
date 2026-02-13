@@ -28,7 +28,10 @@ from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
 from src.collect.wb_analytics import get_wb_market_data
 from src.compose.telegram_post import compose_niche_review
+from src.compose.vk_post import compose_vk_niche_review
 from src.publish.telegram_bot import send_post
+from src.publish.vk_bot import send_vk_post
+from src.config import VK_API_TOKEN
 from src.db import init_db, save_raw_product, save_analyzed_product
 from src.models import TelegramPost
 
@@ -114,13 +117,22 @@ async def post_niche_review(
     if dry_run:
         logger.info("Dry run — skipping publish")
     else:
-        # Publish (use first product as dummy for TelegramPost wrapper)
+        # Telegram
         post = TelegramPost(product=analyzed[0], text=text, image_url="")
         post = await send_post(post)
         if post.published:
-            logger.info("Niche review published!")
+            logger.info("Niche review published to Telegram!")
         else:
-            logger.error("Failed to publish")
+            logger.error("Failed to publish to Telegram")
+
+        # VK
+        if VK_API_TOKEN:
+            vk_text = compose_vk_niche_review(category, analyzed, ai_summary)
+            vk_result = await send_vk_post(text=vk_text)
+            if vk_result["published"]:
+                logger.info("Niche review published to VK!")
+            else:
+                logger.error("Failed to publish to VK")
 
 
 def main() -> None:

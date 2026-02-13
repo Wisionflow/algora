@@ -20,6 +20,11 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
+# VK (VKontakte)
+VK_API_TOKEN = os.getenv("VK_API_TOKEN", "")       # Community access token
+VK_GROUP_ID = os.getenv("VK_GROUP_ID", "")          # Group ID (without minus)
+VK_API_VERSION = "5.199"
+
 # Apify (1688.com data)
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
 APIFY_1688_ACTOR_ID = os.getenv("APIFY_1688_ACTOR_ID", "devcake/1688-com-products-scraper")

@@ -32,8 +32,10 @@ from src.collect.json_file_source import JsonFileCollector
 from src.collect.wb_analytics import get_wb_market_data
 from src.analyze.scoring import analyze_product
 from src.compose.telegram_post import compose_beginner_mistake
+from src.compose.vk_post import compose_vk_beginner_mistake
 from src.publish.telegram_bot import send_post
-from src.config import ANTHROPIC_API_KEY
+from src.publish.vk_bot import send_vk_post
+from src.config import ANTHROPIC_API_KEY, VK_API_TOKEN
 from src.db import init_db, save_raw_product, save_analyzed_product
 from src.models import TelegramPost
 
@@ -166,12 +168,22 @@ async def post_beginner_mistake(
     if dry_run:
         logger.info("Dry run — skipping publish")
     else:
+        # Telegram
         post = TelegramPost(product=product, text=text, image_url="")
         post = await send_post(post)
         if post.published:
-            logger.info("Beginner mistake post published!")
+            logger.info("Beginner mistake published to Telegram!")
         else:
-            logger.error("Failed to publish")
+            logger.error("Failed to publish to Telegram")
+
+        # VK
+        if VK_API_TOKEN:
+            vk_text = compose_vk_beginner_mistake(product, mistake_text)
+            vk_result = await send_vk_post(text=vk_text)
+            if vk_result["published"]:
+                logger.info("Beginner mistake published to VK!")
+            else:
+                logger.error("Failed to publish to VK")
 
 
 def main() -> None:

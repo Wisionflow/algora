@@ -32,12 +32,16 @@ from src.collect.wb_analytics import get_wb_market_data
 from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
 from src.compose.telegram_post import compose_post
+from src.compose.vk_post import compose_vk_post
 from src.publish.telegram_bot import send_post
+from src.publish.vk_bot import send_vk_post
+from src.config import VK_API_TOKEN
 from src.db import (
     init_db,
     save_raw_product,
     save_analyzed_product,
     save_published_post,
+    save_published_vk_post,
     is_already_published,
 )
 from src.models import AnalyzedProduct
@@ -202,18 +206,36 @@ async def run(
         print("=" * 60 + "\n")
 
         if dry_run:
-            logger.info("Dry run -- skipping Telegram publish")
+            logger.info("Dry run -- skipping publish")
         else:
-            logger.info("--- Post {}/{}: PUBLISH ---", idx, len(top))
+            # --- Telegram ---
+            logger.info("--- Post {}/{}: PUBLISH (Telegram) ---", idx, len(top))
             post = await send_post(post)
             if post.published:
-                save_published_post(post)
+                save_published_post(post, platform="telegram")
                 published_count += 1
-                logger.info("Post {} published!", idx)
+                logger.info("Post {} published to Telegram!", idx)
             else:
-                logger.error("Post {} failed to publish", idx)
+                logger.error("Post {} failed to publish to Telegram", idx)
 
-            # Small delay between Telegram messages to avoid flood limits
+            # --- VK ---
+            if VK_API_TOKEN:
+                logger.info("--- Post {}/{}: PUBLISH (VK) ---", idx, len(top))
+                vk_text = compose_vk_post(product)
+                vk_result = await send_vk_post(
+                    text=vk_text,
+                    image_url=product.raw.image_url,
+                    source_url=product.raw.source_url,
+                )
+                if vk_result["published"]:
+                    save_published_vk_post(
+                        product.raw.source_url, vk_text, vk_result["post_id"]
+                    )
+                    logger.info("Post {} published to VK!", idx)
+                else:
+                    logger.error("Post {} failed to publish to VK", idx)
+
+            # Small delay between messages to avoid flood limits
             if idx < len(top):
                 await asyncio.sleep(3.0)
 

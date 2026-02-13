@@ -24,7 +24,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from loguru import logger
 
 from src.compose.telegram_post import compose_weekly_top
+from src.compose.vk_post import compose_vk_weekly_top
 from src.publish.telegram_bot import send_post
+from src.publish.vk_bot import send_vk_post
+from src.config import VK_API_TOKEN
 from src.db import init_db, get_connection
 from src.models import AnalyzedProduct, RawProduct, TelegramPost
 
@@ -99,13 +102,22 @@ async def post_weekly_top(dry_run: bool = False) -> None:
     if dry_run:
         logger.info("Dry run — skipping publish")
     else:
-        # Publish (use first product as wrapper)
+        # Telegram
         post = TelegramPost(product=products[0], text=text, image_url="")
         post = await send_post(post)
         if post.published:
-            logger.info("Weekly top published!")
+            logger.info("Weekly top published to Telegram!")
         else:
-            logger.error("Failed to publish")
+            logger.error("Failed to publish to Telegram")
+
+        # VK
+        if VK_API_TOKEN:
+            vk_text = compose_vk_weekly_top(products)
+            vk_result = await send_vk_post(text=vk_text)
+            if vk_result["published"]:
+                logger.info("Weekly top published to VK!")
+            else:
+                logger.error("Failed to publish to VK")
 
 
 def main() -> None:

@@ -63,10 +63,12 @@ def init_db() -> None:
 
         CREATE TABLE IF NOT EXISTS published_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_url TEXT NOT NULL UNIQUE,
+            source_url TEXT NOT NULL,
             post_text TEXT NOT NULL,
             message_id INTEGER,
-            published_at TEXT NOT NULL
+            platform TEXT NOT NULL DEFAULT 'telegram',
+            published_at TEXT NOT NULL,
+            UNIQUE(source_url, platform)
         );
 
         CREATE TABLE IF NOT EXISTS channel_stats (
@@ -79,6 +81,27 @@ def init_db() -> None:
         """
     )
     conn.commit()
+
+    # Migrate: add 'platform' column to existing published_posts table
+    try:
+        conn.execute("ALTER TABLE published_posts ADD COLUMN platform TEXT NOT NULL DEFAULT 'telegram'")
+        conn.commit()
+        logger.debug("Migrated published_posts: added platform column")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    # Migrate: recreate unique index to include platform
+    try:
+        conn.execute("DROP INDEX IF EXISTS sqlite_autoindex_published_posts_1")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_published_url_platform "
+            "ON published_posts(source_url, platform)"
+        )
+        conn.commit()
+        logger.debug("Migrated published_posts: updated unique index")
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
     logger.info("Database initialized at {}", DB_PATH)
 
@@ -150,17 +173,18 @@ def save_analyzed_product(product: AnalyzedProduct) -> None:
         conn.close()
 
 
-def save_published_post(post: TelegramPost) -> None:
+def save_published_post(post: TelegramPost, platform: str = "telegram") -> None:
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, published_at)
-            VALUES (?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at)
+            VALUES (?, ?, ?, ?, ?)""",
             (
                 post.product.raw.source_url,
                 post.text,
                 post.message_id,
+                platform,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -169,11 +193,35 @@ def save_published_post(post: TelegramPost) -> None:
         conn.close()
 
 
-def is_already_published(source_url: str) -> bool:
+def save_published_vk_post(
+    source_url: str, text: str, post_id: int | None = None
+) -> None:
+    """Save a VK wall post to the published_posts table."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO published_posts
+            (source_url, post_text, message_id, platform, published_at)
+            VALUES (?, ?, ?, ?, ?)""",
+            (
+                source_url,
+                text,
+                post_id,
+                "vk",
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def is_already_published(source_url: str, platform: str = "telegram") -> bool:
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT 1 FROM published_posts WHERE source_url = ?", (source_url,)
+            "SELECT 1 FROM published_posts WHERE source_url = ? AND platform = ?",
+            (source_url, platform),
         ).fetchone()
         return row is not None
     finally:
