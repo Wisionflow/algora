@@ -44,13 +44,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore DB cache
-        uses: actions/cache@v4
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
         with:
-          path: data/algora.db
-          key: algora-db-${{ github.ref_name }}
+          path: |
+            data/algora.db
+            data/wb_cache.json
+            data/products_cache.json
+          key: algora-data-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            algora-db-
+            algora-data-${{ github.ref_name }}-
+            algora-data-
 
       - name: Ensure data dir
         run: mkdir -p data
@@ -94,6 +98,28 @@ jobs:
           echo "post_type=$POST_TYPE" >> "$GITHUB_OUTPUT"
           echo "Selected post type: $POST_TYPE"
 
+      - name: Check secrets availability
+        run: |
+          echo "--- Secrets diagnostic ---"
+          if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
+            echo "WARNING: TELEGRAM_BOT_TOKEN is not set!"
+          else
+            echo "OK: TELEGRAM_BOT_TOKEN is set"
+          fi
+          if [ -z "${{ secrets.VK_API_TOKEN }}" ]; then
+            echo "WARNING: VK_API_TOKEN is not set! VK posting will be skipped."
+          else
+            echo "OK: VK_API_TOKEN is set"
+          fi
+          if [ -z "${{ secrets.APIFY_API_TOKEN }}" ]; then
+            echo "WARNING: APIFY_API_TOKEN is not set! Will fall back to demo data."
+          else
+            echo "OK: APIFY_API_TOKEN is set"
+          fi
+          echo "DB exists: $(test -f data/algora.db && echo 'yes' || echo 'no')"
+          echo "DB size: $(stat -c%s data/algora.db 2>/dev/null || echo 'N/A')"
+          echo "--- End diagnostic ---"
+
       - name: Run post
         env:
           PYTHONIOENCODING: utf-8
@@ -111,7 +137,7 @@ jobs:
               ;;
             niche_review)
               # Pick a random category
-              CATS=("electronics" "gadgets" "home" "phone_accessories" "car_accessories" "led_lighting" "beauty_devices" "smart_home" "outdoor" "toys" "health" "kitchen")
+              CATS=("electronics" "gadgets" "home" "phone_accessories" "car_accessories" "led_lighting" "beauty_devices" "smart_home" "outdoor" "toys" "health" "kitchen" "pet" "sport" "office" "kids" "bags" "jewelry" "tools" "stationery")
               CAT=${CATS[$RANDOM % ${#CATS[@]}]}
               python -X utf8 -m scripts.post_niche_review --category "$CAT" --source 1688 $DRY_FLAG
               ;;
@@ -125,3 +151,13 @@ jobs:
               python -X utf8 -m scripts.post_product_of_week --source 1688 $DRY_FLAG
               ;;
           esac
+
+      - name: Save data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/algora.db
+            data/wb_cache.json
+            data/products_cache.json
+          key: algora-data-${{ github.ref_name }}-${{ github.run_id }}
