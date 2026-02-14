@@ -33,15 +33,16 @@ from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
 from src.compose.telegram_post import compose_post
 from src.compose.vk_post import compose_vk_post
-from src.publish.telegram_bot import send_post
+from src.publish.telegram_bot import send_post, send_post_to_channel
 from src.publish.vk_bot import send_vk_post
-from src.config import VK_API_TOKEN
+from src.config import VK_API_TOKEN, PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID
 from src.db import (
     init_db,
     save_raw_product,
     save_analyzed_product,
     save_published_post,
     save_published_vk_post,
+    save_post_engagement,
     is_already_published,
 )
 from src.models import AnalyzedProduct
@@ -66,6 +67,10 @@ _CATEGORY_WB_FALLBACK: dict[str, tuple[float, int]] = {
     "sport": (2200, 40),
     "office": (800, 50),
     "kids": (1200, 45),
+    "bags": (2500, 50),
+    "jewelry": (600, 60),
+    "tools": (1500, 35),
+    "stationery": (400, 45),
 }
 
 
@@ -187,6 +192,8 @@ async def run(
         )
 
     # --- STEP 3-5: AI INSIGHT + COMPOSE + PUBLISH (for each top product) ---
+    # Two-tier logic: when premium enabled, top products go to premium channel
+    premium_count = 2  # top N go to premium
     published_count = 0
     for idx, product in enumerate(top, 1):
         logger.info("--- Post {}/{}: AI INSIGHT ---", idx, len(top))
@@ -197,28 +204,51 @@ async def run(
         post = compose_post(product)
         logger.info("Post {} composed ({} chars)", idx, len(post.text))
 
+        # Determine target channel
+        is_premium_post = (
+            PREMIUM_ENABLED
+            and TELEGRAM_PREMIUM_CHANNEL_ID
+            and idx <= premium_count
+        )
+        channel_label = "PREMIUM" if is_premium_post else "FREE"
+
         # Print preview
         print("\n" + "=" * 60)
-        print(f"PREVIEW [{idx}/{len(top)}]:")
+        print(f"PREVIEW [{idx}/{len(top)}] ({channel_label}):")
         print("=" * 60)
         preview = re.sub(r"<[^>]+>", "", post.text)
         print(preview)
         print("=" * 60 + "\n")
 
         if dry_run:
-            logger.info("Dry run -- skipping publish")
+            logger.info("Dry run -- skipping publish ({})", channel_label)
         else:
             # --- Telegram ---
-            logger.info("--- Post {}/{}: PUBLISH (Telegram) ---", idx, len(top))
-            post = await send_post(post)
+            if is_premium_post:
+                logger.info("--- Post {}/{}: PUBLISH (Telegram PREMIUM) ---", idx, len(top))
+                post = await send_post_to_channel(post, TELEGRAM_PREMIUM_CHANNEL_ID)
+            else:
+                logger.info("--- Post {}/{}: PUBLISH (Telegram FREE) ---", idx, len(top))
+                post = await send_post(post)
+
             if post.published:
-                save_published_post(post, platform="telegram")
+                save_published_post(
+                    post, platform="telegram",
+                    post_type="product", category=product.raw.category,
+                )
+                save_post_engagement(
+                    message_id=post.message_id,
+                    platform="telegram",
+                    post_type="product",
+                    category=product.raw.category,
+                    total_score=product.total_score,
+                )
                 published_count += 1
-                logger.info("Post {} published to Telegram!", idx)
+                logger.info("Post {} published to Telegram ({})!", idx, channel_label)
             else:
                 logger.error("Post {} failed to publish to Telegram", idx)
 
-            # --- VK ---
+            # --- VK (always free) ---
             if VK_API_TOKEN:
                 logger.info("--- Post {}/{}: PUBLISH (VK) ---", idx, len(top))
                 vk_text = compose_vk_post(product)
@@ -229,7 +259,8 @@ async def run(
                 )
                 if vk_result["published"]:
                     save_published_vk_post(
-                        product.raw.source_url, vk_text, vk_result["post_id"]
+                        product.raw.source_url, vk_text, vk_result["post_id"],
+                        post_type="product", category=product.raw.category,
                     )
                     logger.info("Post {} published to VK!", idx)
                 else:
@@ -263,7 +294,8 @@ def main() -> None:
         default="all",
         help="Product category: electronics, gadgets, home, phone_accessories, "
              "car_accessories, led_lighting, beauty_devices, smart_home, outdoor, "
-             "toys, health, kitchen, pet, sport, office, kids, or 'all' (default: all)",
+             "toys, health, kitchen, pet, sport, office, kids, bags, jewelry, "
+             "tools, stationery, or 'all' (default: all)",
     )
     parser.add_argument(
         "--source",

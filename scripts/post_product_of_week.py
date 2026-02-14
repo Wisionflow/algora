@@ -38,7 +38,7 @@ from src.compose.vk_post import compose_vk_product_of_week
 from src.publish.telegram_bot import send_post
 from src.publish.vk_bot import send_vk_post
 from src.config import ANTHROPIC_API_KEY, VK_API_TOKEN
-from src.db import init_db, get_connection, save_raw_product, save_analyzed_product
+from src.db import init_db, get_connection, save_raw_product, save_analyzed_product, save_post_engagement
 from src.models import AnalyzedProduct, RawProduct, TelegramPost
 
 
@@ -244,6 +244,13 @@ async def post_product_of_week(
         post = TelegramPost(product=product, text=text, image_url="")
         post = await send_post(post)
         if post.published:
+            save_post_engagement(
+                message_id=post.message_id,
+                platform="telegram",
+                post_type="product_of_week",
+                category=r.category,
+                total_score=product.total_score,
+            )
             logger.info("Product of the week published to Telegram!")
         else:
             logger.error("Failed to publish to Telegram")

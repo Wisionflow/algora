@@ -20,23 +20,28 @@ from src.models import RawProduct
 from .base import BaseCollector
 
 # Category keywords for 1688 search (Chinese)
+# Updated with trending modifiers (新款=new style, 2025/2026=year, 跨境=cross-border export)
 CATEGORY_KEYWORDS: dict[str, str] = {
-    "electronics": "电子产品 爆款",
-    "gadgets": "智能小家电 新款",
-    "home": "家居用品 热销",
-    "phone_accessories": "手机配件 爆款",
-    "car_accessories": "汽车用品 热卖",
-    "led_lighting": "LED灯 新款",
-    "beauty_devices": "美容仪器 爆款",
-    "smart_home": "智能家居 热销",
-    "outdoor": "户外用品 新款",
-    "toys": "玩具 爆款 新奇",
-    "health": "健康 按摩 爆款",
-    "kitchen": "厨房用品 爆款 小工具",
-    "pet": "宠物用品 爆款 智能",
-    "sport": "运动装备 健身 爆款",
-    "office": "办公用品 创意 桌面",
-    "kids": "儿童用品 益智 爆款",
+    "electronics": "电子产品 爆款 新款 2026",
+    "gadgets": "智能小家电 新款 创意 2026",
+    "home": "家居用品 热销 新款 收纳",
+    "phone_accessories": "手机配件 爆款 新款 无线",
+    "car_accessories": "汽车用品 热卖 新款 智能",
+    "led_lighting": "LED灯 新款 氛围灯 装饰",
+    "beauty_devices": "美容仪器 爆款 新款 家用",
+    "smart_home": "智能家居 热销 新款 WiFi",
+    "outdoor": "户外用品 新款 露营 便携",
+    "toys": "玩具 爆款 新奇 益智 2026",
+    "health": "健康 按摩 爆款 家用 便携",
+    "kitchen": "厨房用品 爆款 小工具 创意 新款",
+    "pet": "宠物用品 爆款 智能 喂食",
+    "sport": "运动装备 健身 爆款 瑜伽 新款",
+    "office": "办公用品 创意 桌面 收纳 新款",
+    "kids": "儿童用品 益智 爆款 早教 新款",
+    "bags": "箱包 女包 爆款 新款 跨境",
+    "jewelry": "饰品 项链 耳环 爆款 新款",
+    "tools": "五金工具 电动工具 爆款 多功能",
+    "stationery": "文具 创意 学生 爆款 新款",
 }
 
 _translator = GoogleTranslator(source="zh-CN", target="ru")

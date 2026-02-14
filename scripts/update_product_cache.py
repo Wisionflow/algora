@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from loguru import logger
 
 from src.collect.alibaba_1688 import CATEGORY_KEYWORDS, Collector1688
+from src.collect.wb_analytics import get_wb_market_data
 from src.config import DATA_DIR
 
 
@@ -49,6 +50,18 @@ async def main(categories: list[str], limit_per_cat: int = 30):
         logger.warning("No products collected — cache not updated")
         return
 
+    # Pre-populate wb_est_price for each product
+    logger.info("Pre-populating WB prices for {} products...", len(all_products))
+    for p in all_products:
+        if p.wb_est_price > 0:
+            continue
+        search_query = p.title_ru[:50] if p.title_ru else p.title_cn[:30]
+        wb_data = await get_wb_market_data(search_query, keyword=p.wb_keyword)
+        if wb_data["avg_price"] > 0:
+            p.wb_est_price = wb_data["avg_price"]
+            logger.debug("  WB price for '{}': {}r", p.title_ru[:30], p.wb_est_price)
+        await asyncio.sleep(1.0)
+
     # Serialize to JSON
     data = []
     for p in all_products:
@@ -60,7 +73,8 @@ async def main(categories: list[str], limit_per_cat: int = 30):
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    logger.info("Cached {} products to {}", len(data), cache_path)
+    wb_populated = sum(1 for p in all_products if p.wb_est_price > 0)
+    logger.info("Cached {} products ({} with WB prices) to {}", len(data), wb_populated, cache_path)
 
 
 if __name__ == "__main__":

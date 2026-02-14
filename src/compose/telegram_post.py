@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 
+from src.config import PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID
 from src.models import AnalyzedProduct, TelegramPost
 
 # Russian category names for display
@@ -32,6 +33,10 @@ CATEGORY_NAMES: dict[str, str] = {
     "sport": "Спорт",
     "office": "Офис",
     "kids": "Детские товары",
+    "bags": "Сумки и рюкзаки",
+    "jewelry": "Украшения",
+    "tools": "Инструменты",
+    "stationery": "Канцелярия",
 }
 
 # Hashtags per category
@@ -52,7 +57,19 @@ CATEGORY_TAGS: dict[str, str] = {
     "sport": "#спорт",
     "office": "#офис",
     "kids": "#дети",
+    "bags": "#сумки",
+    "jewelry": "#украшения",
+    "tools": "#инструменты",
+    "stationery": "#канцелярия",
 }
+
+
+def _premium_cta() -> str:
+    """Return CTA footer for free channel posts when premium is enabled."""
+    if not PREMIUM_ENABLED or not TELEGRAM_PREMIUM_CHANNEL_ID:
+        return ""
+    channel = TELEGRAM_PREMIUM_CHANNEL_ID.lstrip("@")
+    return f"\n\n🔒 Лучшие находки — в Algora PRO: @{channel}"
 
 
 def _trend_emoji(score: float) -> str:
@@ -91,11 +108,54 @@ def _clean_insight(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _compose_compact(product: AnalyzedProduct) -> str:
+    """Compact post text that fits within Telegram's 1024-char photo caption limit."""
+    p = product
+    r = product.raw
+    title = (r.title_ru or r.title_cn)[:50]
+    margin_icon = _margin_emoji(p.margin_pct)
+    cat_name = CATEGORY_NAMES.get(r.category, r.category)
+
+    lines = [
+        f"🔍 <b>ALGORA | Находка дня</b>",
+        "",
+        f"📦 <b>{title}</b>",
+        f"📂 {cat_name}",
+        "",
+        f"💰 ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽) → В РФ: ~{p.total_landed_cost:.0f}₽",
+    ]
+
+    if p.wb_competitors > 0:
+        lines.append(f"📊 WB: {p.wb_competitors} конкурентов, ~{p.wb_avg_price:.0f}₽")
+
+    lines.append(f"📈 Маржа: ~{p.margin_pct:.0f}% {margin_icon} | {_score_bar(p.total_score)} {p.total_score:.1f}")
+
+    if p.ai_insight:
+        insight = _clean_insight(p.ai_insight)[:150]
+        lines.append(f"\n💡 {insight}")
+
+    if r.source_url:
+        lines.append(f'\n🔗 <a href="{r.source_url}">Фабрика</a>')
+
+    return "\n".join(lines)
+
+
 def compose_post(product: AnalyzedProduct) -> TelegramPost:
-    """Build a Telegram post from an analyzed product."""
+    """Build a Telegram post from an analyzed product.
+
+    If image_url is available and text fits 1024 chars, uses compact format
+    for sendPhoto. Otherwise uses full format for sendMessage.
+    """
     p = product
     r = product.raw
 
+    # Try compact format first if there's an image
+    if r.image_url:
+        compact = _compose_compact(product) + _premium_cta()
+        if len(compact) <= 1024:
+            return TelegramPost(product=product, text=compact, image_url=r.image_url)
+
+    # Full format (text-only or when compact doesn't fit)
     title = r.title_ru or r.title_cn
     trend_icon = _trend_emoji(p.trend_score)
     margin_icon = _margin_emoji(p.margin_pct)
@@ -153,8 +213,8 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     lines.append("")
     lines.append(f"{cat_tag} #китай #маркетплейс #wb #ozon")
 
-    text = "\n".join(lines)
-    return TelegramPost(product=product, text=text, image_url=r.image_url)
+    text = "\n".join(lines) + _premium_cta()
+    return TelegramPost(product=product, text=text, image_url="")
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +274,7 @@ def compose_niche_review(
     lines.append("")
     lines.append(f"{cat_tag} #обзорниши #китай #маркетплейс #wb #ozon")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _premium_cta()
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +310,7 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
     lines.append("")
     lines.append("#топнедели #китай #маркетплейс #wb #ozon")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _premium_cta()
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +355,7 @@ def compose_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> str
     lines.append("")
     lines.append(f"{cat_tag} #ошибкановичка #обучение #маркетплейс #wb #ozon")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _premium_cta()
 
 
 # ---------------------------------------------------------------------------
@@ -369,4 +429,4 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
     lines.append("")
     lines.append(f"{cat_tag} #товарнедели #разбор #китай #маркетплейс #wb #ozon")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + _premium_cta()

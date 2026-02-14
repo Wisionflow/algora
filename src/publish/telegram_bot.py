@@ -76,6 +76,53 @@ async def send_post(post: TelegramPost) -> TelegramPost:
     return post
 
 
+async def send_post_to_channel(post: TelegramPost, channel_id: str) -> TelegramPost:
+    """Send a post to a specific Telegram channel (used for premium channel)."""
+    if not TELEGRAM_BOT_TOKEN or not channel_id:
+        return post
+
+    use_photo = bool(post.image_url) and len(post.text) <= 1024
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            if use_photo:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                payload = {
+                    "chat_id": channel_id,
+                    "photo": post.image_url,
+                    "caption": post.text,
+                    "parse_mode": "HTML",
+                }
+                resp = await client.post(url, json=payload)
+                if resp.status_code != 200 or not resp.json().get("ok"):
+                    use_photo = False
+
+            if not use_photo:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                payload = {
+                    "chat_id": channel_id,
+                    "text": post.text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False,
+                }
+                resp = await client.post(url, json=payload)
+
+            resp.raise_for_status()
+            data = resp.json()
+
+        if data.get("ok"):
+            post.published = True
+            post.message_id = data["result"]["message_id"]
+            logger.info("Published to {} (message_id={})", channel_id, post.message_id)
+        else:
+            logger.error("Telegram API error for {}: {}", channel_id, data.get("description"))
+
+    except Exception as e:
+        logger.error("Failed to send to {}: {}", channel_id, e)
+
+    return post
+
+
 async def get_channel_info() -> dict:
     """Get channel subscriber count and other info."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:

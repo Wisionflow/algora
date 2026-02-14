@@ -3,27 +3,37 @@
 Fetches competition data and average prices from WB search API
 to estimate market conditions for a given product.
 Uses a persistent session and retry with exponential backoff for rate limits (429).
+Includes file-based cache with 7-day TTL to persist data across GitHub Actions runs.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from datetime import datetime, timezone
 
 import httpx
 from loguru import logger
+
+from src.config import DATA_DIR
 
 _EMPTY = {"avg_price": 0, "competitors": 0, "min_price": 0, "max_price": 0, "image_url": "", "product_url": ""}
 
 MAX_RETRIES = 3
 BASE_DELAY = 8.0  # seconds before first retry
 MIN_REQUEST_GAP = 10.0  # minimum seconds between any WB requests
+CACHE_TTL_DAYS = 7  # file cache entries expire after 7 days
+
+# File-based persistent cache
+_WB_CACHE_PATH = DATA_DIR / "wb_cache.json"
 
 # Module-level rate limiter
 _last_request_at: float = 0.0
 
-# In-memory cache for WB results (avoid duplicate queries)
+# In-memory cache for WB results (avoid duplicate queries within a run)
 _wb_cache: dict[str, dict] = {}
+_cache_loaded = False
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -36,6 +46,66 @@ _HEADERS = {
 
 # Module-level persistent client (reuse connections)
 _client: httpx.AsyncClient | None = None
+
+
+def _load_file_cache() -> None:
+    """Load persistent cache from JSON file, evicting expired entries."""
+    global _wb_cache, _cache_loaded
+    if _cache_loaded:
+        return
+    _cache_loaded = True
+
+    if not _WB_CACHE_PATH.exists():
+        return
+
+    try:
+        raw = json.loads(_WB_CACHE_PATH.read_text(encoding="utf-8"))
+        now = datetime.now(timezone.utc)
+        loaded = 0
+        for key, entry in raw.items():
+            cached_at = entry.get("_cached_at", "")
+            if cached_at:
+                age = (now - datetime.fromisoformat(cached_at)).days
+                if age > CACHE_TTL_DAYS:
+                    continue
+            # Strip metadata before putting into in-memory cache
+            data = {k: v for k, v in entry.items() if not k.startswith("_")}
+            _wb_cache[key] = data
+            loaded += 1
+        logger.info("WB cache loaded: {} entries from file ({} expired)", loaded, len(raw) - loaded)
+    except Exception as e:
+        logger.warning("Failed to load WB cache file: {}", e)
+
+
+def _save_file_cache() -> None:
+    """Save in-memory cache to JSON file with timestamps."""
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        # Read existing file to preserve timestamps
+        existing: dict = {}
+        if _WB_CACHE_PATH.exists():
+            try:
+                existing = json.loads(_WB_CACHE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        output: dict = {}
+        for key, data in _wb_cache.items():
+            entry = dict(data)
+            # Preserve original timestamp if it exists
+            if key in existing and "_cached_at" in existing[key]:
+                entry["_cached_at"] = existing[key]["_cached_at"]
+            else:
+                entry["_cached_at"] = now
+            output[key] = entry
+
+        _WB_CACHE_PATH.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.debug("WB cache saved: {} entries", len(output))
+    except Exception as e:
+        logger.warning("Failed to save WB cache file: {}", e)
 
 
 def _wb_image_url(product_id: int) -> str:
@@ -97,7 +167,11 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
 
     Uses keyword if provided, otherwise first 2 words of query.
     Retries up to 3 times with exponential backoff on 429.
+    Results are cached in-memory and persisted to data/wb_cache.json (7-day TTL).
     """
+    # Load file cache on first call
+    _load_file_cache()
+
     # Prefer explicit keyword over auto-shortened query
     search_term = keyword.strip() if keyword else " ".join(query.split()[:2])
 
@@ -192,6 +266,7 @@ async def get_wb_market_data(query: str, keyword: str = "") -> dict:
             search_term, result["avg_price"], result["competitors"],
         )
         _wb_cache[search_term] = result
+        _save_file_cache()
         return result
 
     # All retries exhausted

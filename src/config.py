@@ -20,6 +20,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
+# Premium channel (disabled until 1K+ free subscribers)
+TELEGRAM_PREMIUM_CHANNEL_ID = os.getenv("TELEGRAM_PREMIUM_CHANNEL_ID", "")
+PREMIUM_ENABLED = os.getenv("PREMIUM_ENABLED", "false").lower() in ("true", "1", "yes")
+
 # VK (VKontakte)
 VK_API_TOKEN = os.getenv("VK_API_TOKEN", "")       # Community access token
 VK_GROUP_ID = os.getenv("VK_GROUP_ID", "")          # Group ID (without minus)

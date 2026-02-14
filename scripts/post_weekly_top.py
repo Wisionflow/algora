@@ -28,7 +28,7 @@ from src.compose.vk_post import compose_vk_weekly_top
 from src.publish.telegram_bot import send_post
 from src.publish.vk_bot import send_vk_post
 from src.config import VK_API_TOKEN
-from src.db import init_db, get_connection
+from src.db import init_db, get_connection, save_post_engagement
 from src.models import AnalyzedProduct, RawProduct, TelegramPost
 
 
@@ -106,6 +106,11 @@ async def post_weekly_top(dry_run: bool = False) -> None:
         post = TelegramPost(product=products[0], text=text, image_url="")
         post = await send_post(post)
         if post.published:
+            save_post_engagement(
+                message_id=post.message_id,
+                platform="telegram",
+                post_type="weekly_top",
+            )
             logger.info("Weekly top published to Telegram!")
         else:
             logger.error("Failed to publish to Telegram")

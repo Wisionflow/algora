@@ -78,6 +78,20 @@ def init_db() -> None:
             posts_total INTEGER DEFAULT 0,
             recorded_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS post_engagement (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'telegram',
+            post_type TEXT,
+            category TEXT,
+            total_score REAL,
+            views INTEGER DEFAULT 0,
+            forwards INTEGER DEFAULT 0,
+            reactions INTEGER DEFAULT 0,
+            checked_at TEXT NOT NULL,
+            UNIQUE(message_id, platform)
+        );
         """
     )
     conn.commit()
@@ -99,6 +113,22 @@ def init_db() -> None:
         )
         conn.commit()
         logger.debug("Migrated published_posts: updated unique index")
+    except sqlite3.OperationalError:
+        pass
+
+    # Migrate: add 'post_type' column to published_posts
+    try:
+        conn.execute("ALTER TABLE published_posts ADD COLUMN post_type TEXT")
+        conn.commit()
+        logger.debug("Migrated published_posts: added post_type column")
+    except sqlite3.OperationalError:
+        pass
+
+    # Migrate: add 'category' column to published_posts
+    try:
+        conn.execute("ALTER TABLE published_posts ADD COLUMN category TEXT")
+        conn.commit()
+        logger.debug("Migrated published_posts: added category column")
     except sqlite3.OperationalError:
         pass
 
@@ -173,19 +203,26 @@ def save_analyzed_product(product: AnalyzedProduct) -> None:
         conn.close()
 
 
-def save_published_post(post: TelegramPost, platform: str = "telegram") -> None:
+def save_published_post(
+    post: TelegramPost,
+    platform: str = "telegram",
+    post_type: str = "product",
+    category: str = "",
+) -> None:
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at)
-            VALUES (?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 post.product.raw.source_url,
                 post.text,
                 post.message_id,
                 platform,
                 datetime.now(timezone.utc).isoformat(),
+                post_type,
+                category,
             ),
         )
         conn.commit()
@@ -194,21 +231,27 @@ def save_published_post(post: TelegramPost, platform: str = "telegram") -> None:
 
 
 def save_published_vk_post(
-    source_url: str, text: str, post_id: int | None = None
+    source_url: str,
+    text: str,
+    post_id: int | None = None,
+    post_type: str = "product",
+    category: str = "",
 ) -> None:
     """Save a VK wall post to the published_posts table."""
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at)
-            VALUES (?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 source_url,
                 text,
                 post_id,
                 "vk",
                 datetime.now(timezone.utc).isoformat(),
+                post_type,
+                category,
             ),
         )
         conn.commit()
@@ -281,6 +324,66 @@ def get_top_products(limit: int = 10) -> list[dict]:
             ORDER BY total_score DESC
             LIMIT ?""",
             (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def save_post_engagement(
+    message_id: int,
+    platform: str = "telegram",
+    post_type: str = "",
+    category: str = "",
+    total_score: float = 0.0,
+) -> None:
+    """Record post metadata for engagement tracking."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO post_engagement
+            (message_id, platform, post_type, category, total_score, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                message_id,
+                platform,
+                post_type,
+                category,
+                total_score,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_posts_by_type() -> list[dict]:
+    """Get post counts grouped by post_type."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT post_type, COUNT(*) as cnt
+            FROM published_posts
+            WHERE post_type IS NOT NULL
+            GROUP BY post_type
+            ORDER BY cnt DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_posts_by_category() -> list[dict]:
+    """Get post counts grouped by category."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT category, COUNT(*) as cnt
+            FROM published_posts
+            WHERE category IS NOT NULL AND category != ''
+            GROUP BY category
+            ORDER BY cnt DESC"""
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
