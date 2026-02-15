@@ -64,8 +64,9 @@ def _build_dashboard_html() -> str:
             hist_subs.append(row["subscribers"])
             hist_posts.append(row["posts_total"])
 
-    # Engagement summary
-    eng = get_engagement_summary() or {}
+    # Engagement summary (replace None values with 0)
+    eng_raw = get_engagement_summary() or {}
+    eng = {k: (v if v is not None else 0) for k, v in eng_raw.items()}
 
     # Engagement by post type
     eng_by_type = get_engagement_by_post_type()
