@@ -31,6 +31,7 @@ from src.collect.json_file_source import JsonFileCollector
 from src.collect.wb_analytics import get_wb_market_data
 from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
+from src.analyze.keywords import generate_keywords
 from src.compose.telegram_post import compose_post
 from src.compose.vk_post import compose_vk_post
 from src.publish.telegram_bot import send_post, send_post_to_channel
@@ -126,9 +127,27 @@ async def run(
             logger.debug("Skipping already published: {}", raw.title_ru[:40])
             continue
 
-        # Get WB market data (use wb_keyword if available, fallback to title)
+        # Generate keywords (before WB fetch so we can use optimized keyword)
+        try:
+            keywords_result = await generate_keywords(raw)
+            logger.debug(
+                "Keywords: {} extracted, {} AI, optimized: '{}'",
+                len(keywords_result["extracted"]),
+                len(keywords_result["ai_suggested"]),
+                keywords_result["wb_optimized"][:30],
+            )
+        except Exception as e:
+            logger.warning("Keyword generation failed for {}: {}", raw.title_ru[:30], e)
+            keywords_result = {
+                "extracted": [],
+                "ai_suggested": [],
+                "wb_optimized": raw.wb_keyword,
+            }
+
+        # Get WB market data (use optimized keyword, fallback to wb_keyword)
+        search_keyword = keywords_result["wb_optimized"] or raw.wb_keyword
         search_query = raw.title_ru[:50] if raw.title_ru else raw.title_cn[:30]
-        wb_data = await get_wb_market_data(search_query, keyword=raw.wb_keyword)
+        wb_data = await get_wb_market_data(search_query, keyword=search_keyword)
 
         # If WB API failed, use fallback pricing
         wb_price = wb_data["avg_price"]
@@ -160,6 +179,12 @@ async def run(
             wb_avg_price=wb_price,
             wb_competitors=wb_comps,
         )
+
+        # Add keyword enrichment
+        product.keywords_extracted = keywords_result["extracted"]
+        product.keywords_ai = keywords_result["ai_suggested"]
+        product.wb_keyword_optimized = keywords_result["wb_optimized"]
+
         analyzed.append(product)
         save_analyzed_product(product)
 

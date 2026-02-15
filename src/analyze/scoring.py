@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from loguru import logger
 
+from src.analyze.trends import detect_trends
 from src.config import (
     COMPETITION_WEIGHT,
     MARGIN_WEIGHT,
@@ -130,6 +131,13 @@ def analyze_product(
         wb_competitors,
     )
 
+    # Detect trends and market opportunity
+    trends = detect_trends(
+        sales_volume=product.sales_volume,
+        competitors=wb_competitors,
+        margin_pct=scores["margin_pct"],
+    )
+
     return AnalyzedProduct(
         raw=product,
         price_rub=costs["price_rub"],
@@ -145,4 +153,10 @@ def analyze_product(
         margin_score=scores["margin_score"],
         reliability_score=scores["reliability_score"],
         total_score=scores["total_score"],
+        # Trend enrichment
+        trending_status=trends["trending_status"],
+        trending_emoji=trends["trending_emoji"],
+        market_opportunity=trends["market_opportunity"],
+        market_emoji=trends["market_emoji"],
+        trend_confidence=trends["trend_confidence"],
     )

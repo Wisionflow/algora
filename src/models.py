@@ -59,6 +59,21 @@ class AnalyzedProduct(BaseModel):
     # AI insight
     ai_insight: str = ""
 
+    # Keywords enrichment
+    keywords_extracted: list[str] = Field(default_factory=list)
+    keywords_ai: list[str] = Field(default_factory=list)
+    wb_keyword_optimized: str = ""
+
+    # Trend enrichment
+    trending_status: str = ""
+    trending_emoji: str = ""
+    market_opportunity: str = ""
+    market_emoji: str = ""
+    trend_confidence: float = 0.0
+
+    # Competitive landscape (future: Phase 3)
+    competitive_landscape: dict = Field(default_factory=dict)
+
 
 class TelegramPost(BaseModel):
     """Ready-to-publish Telegram post."""

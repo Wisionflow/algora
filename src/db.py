@@ -140,6 +140,22 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: add enrichment fields to analyzed_products (keywords, trends, competitive)
+    try:
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN keywords_extracted TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN keywords_ai TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN wb_keyword_optimized TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN trending_status TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN trending_emoji TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN market_opportunity TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN market_emoji TEXT")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN trend_confidence REAL")
+        conn.execute("ALTER TABLE analyzed_products ADD COLUMN competitive_landscape TEXT")
+        conn.commit()
+        logger.debug("Migrated analyzed_products: added enrichment columns")
+    except sqlite3.OperationalError:
+        pass  # Columns already exist
+
     conn.close()
     logger.info("Database initialized at {}", DB_PATH)
 
@@ -184,8 +200,11 @@ def save_analyzed_product(product: AnalyzedProduct) -> None:
             (source_url, raw_json, price_rub, delivery_cost_est, customs_duty_est,
              total_landed_cost, wb_avg_price, wb_competitors, margin_pct, margin_rub,
              trend_score, competition_score, margin_score, reliability_score,
-             total_score, ai_insight, analyzed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             total_score, ai_insight, analyzed_at,
+             keywords_extracted, keywords_ai, wb_keyword_optimized,
+             trending_status, trending_emoji, market_opportunity, market_emoji,
+             trend_confidence, competitive_landscape)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 product.raw.source_url,
                 product.raw.model_dump_json(),
@@ -204,6 +223,16 @@ def save_analyzed_product(product: AnalyzedProduct) -> None:
                 product.total_score,
                 product.ai_insight,
                 datetime.now(timezone.utc).isoformat(),
+                # Enrichment fields (stored as JSON)
+                json.dumps(product.keywords_extracted),
+                json.dumps(product.keywords_ai),
+                product.wb_keyword_optimized,
+                product.trending_status,
+                product.trending_emoji,
+                product.market_opportunity,
+                product.market_emoji,
+                product.trend_confidence,
+                json.dumps(product.competitive_landscape),
             ),
         )
         conn.commit()

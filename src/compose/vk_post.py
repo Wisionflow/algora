@@ -104,6 +104,15 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
     if p.wb_competitors > 0:
         lines.append(f"Конкуренция на WB: {p.wb_competitors} продавцов")
 
+    # Show trend indicators
+    trend_parts = []
+    if p.market_opportunity:
+        trend_parts.append(f"{p.market_emoji} {p.market_opportunity}")
+    if p.trending_status:
+        trend_parts.append(f"{p.trending_emoji} {p.trending_status}")
+    if trend_parts:
+        lines.append(" — ".join(trend_parts))
+
     lines.append(f"Рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
 
     # --- Поставщик ---
@@ -123,6 +132,13 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
         insight = _clean_insight(p.ai_insight)
         lines.append(f"💡 {insight}")
         lines.append("")
+
+    # --- Keywords ---
+    if p.keywords_ai or p.keywords_extracted:
+        keywords = (p.keywords_ai or p.keywords_extracted)[:5]
+        if keywords:
+            lines.append(f"🔍 Ключевые слова для WB: {', '.join(keywords)}")
+            lines.append("")
 
     if r.source_url:
         lines.append(f"Смотреть на фабрике: {r.source_url}")
