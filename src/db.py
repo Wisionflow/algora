@@ -132,6 +132,14 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: add 'image_url' column to published_posts (for photo dedup)
+    try:
+        conn.execute("ALTER TABLE published_posts ADD COLUMN image_url TEXT")
+        conn.commit()
+        logger.debug("Migrated published_posts: added image_url column")
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
     logger.info("Database initialized at {}", DB_PATH)
 
@@ -208,13 +216,14 @@ def save_published_post(
     platform: str = "telegram",
     post_type: str = "product",
     category: str = "",
+    image_url: str = "",
 ) -> None:
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at, post_type, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 post.product.raw.source_url,
                 post.text,
@@ -223,6 +232,7 @@ def save_published_post(
                 datetime.now(timezone.utc).isoformat(),
                 post_type,
                 category,
+                image_url,
             ),
         )
         conn.commit()
@@ -236,14 +246,15 @@ def save_published_vk_post(
     post_id: int | None = None,
     post_type: str = "product",
     category: str = "",
+    image_url: str = "",
 ) -> None:
     """Save a VK wall post to the published_posts table."""
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at, post_type, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 source_url,
                 text,
@@ -252,9 +263,28 @@ def save_published_vk_post(
                 datetime.now(timezone.utc).isoformat(),
                 post_type,
                 category,
+                image_url,
             ),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def is_image_already_published(image_url: str) -> bool:
+    """Check if this image URL has already been used in a published post.
+
+    Returns True if duplicate — post should go without photo.
+    """
+    if not image_url:
+        return False
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM published_posts WHERE image_url = ? AND image_url != '' LIMIT 1",
+            (image_url,),
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()
 
@@ -354,6 +384,131 @@ def save_post_engagement(
             ),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def update_post_engagement(
+    message_id: int,
+    platform: str = "telegram",
+    views: int = 0,
+    forwards: int = 0,
+    reactions: int = 0,
+) -> None:
+    """Update real engagement metrics for a post."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE post_engagement
+            SET views = ?, forwards = ?, reactions = ?,
+                checked_at = ?
+            WHERE message_id = ? AND platform = ?""",
+            (
+                views,
+                forwards,
+                reactions,
+                datetime.now(timezone.utc).isoformat(),
+                message_id,
+                platform,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_posts_for_engagement_update() -> list[dict]:
+    """Get all posts that need engagement metrics updated."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT pe.message_id, pe.platform, pe.post_type, pe.category,
+                      pe.total_score, pe.views, pe.forwards, pe.reactions
+            FROM post_engagement pe
+            ORDER BY pe.checked_at DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_engagement_summary() -> dict:
+    """Get aggregate engagement stats for reporting."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """SELECT
+                COUNT(*) as total_posts,
+                SUM(views) as total_views,
+                SUM(forwards) as total_forwards,
+                SUM(reactions) as total_reactions,
+                ROUND(AVG(CASE WHEN views > 0 THEN views END), 1) as avg_views,
+                MAX(views) as max_views
+            FROM post_engagement
+            WHERE platform = 'telegram'"""
+        ).fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def get_engagement_by_post_type() -> list[dict]:
+    """Get average engagement grouped by post type."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT post_type,
+                      COUNT(*) as cnt,
+                      ROUND(AVG(views), 1) as avg_views,
+                      SUM(views) as total_views,
+                      MAX(views) as max_views
+            FROM post_engagement
+            WHERE platform = 'telegram' AND views > 0
+            GROUP BY post_type
+            ORDER BY avg_views DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_engagement_by_category() -> list[dict]:
+    """Get average engagement grouped by category."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT category,
+                      COUNT(*) as cnt,
+                      ROUND(AVG(views), 1) as avg_views,
+                      SUM(views) as total_views
+            FROM post_engagement
+            WHERE platform = 'telegram' AND views > 0
+                  AND category IS NOT NULL AND category != ''
+            GROUP BY category
+            ORDER BY avg_views DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_top_posts_by_views(limit: int = 5) -> list[dict]:
+    """Get top posts by view count, joined with published_posts for text."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT pe.message_id, pe.platform, pe.post_type, pe.category,
+                      pe.views, pe.forwards, pe.reactions, pe.total_score,
+                      pp.source_url
+            FROM post_engagement pe
+            LEFT JOIN published_posts pp
+                ON pe.message_id = pp.message_id AND pe.platform = pp.platform
+            WHERE pe.views > 0
+            ORDER BY pe.views DESC
+            LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 

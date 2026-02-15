@@ -28,6 +28,11 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -53,6 +58,7 @@ jobs:
             data/algora.db
             data/wb_cache.json
             data/products_cache.json
+            data/dashboard.html
           key: algora-data-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             algora-data-${{ github.ref_name }}-
@@ -166,6 +172,30 @@ jobs:
               ;;
           esac
 
+      - name: Update engagement & save stats
+        if: always()
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -X utf8 -m scripts.analytics --update-engagement --save
+
+      - name: Generate dashboard
+        if: always()
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -X utf8 -m scripts.dashboard
+
+      - name: Prepare Pages directory
+        if: always()
+        run: |
+          mkdir -p _site
+          cp data/dashboard.html _site/index.html
+
+      - name: Upload Pages artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
       - name: Save data cache
         if: always()
         uses: actions/cache/save@v4
@@ -174,4 +204,17 @@ jobs:
             data/algora.db
             data/wb_cache.json
             data/products_cache.json
+            data/dashboard.html
           key: algora-data-${{ github.ref_name }}-${{ github.run_id }}
+
+  deploy-dashboard:
+    needs: post
+    if: always()
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

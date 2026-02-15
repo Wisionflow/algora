@@ -118,7 +118,9 @@ async def post_niche_review(
         logger.info("Dry run — skipping publish")
     else:
         # Telegram
-        post = TelegramPost(product=analyzed[0], text=text, image_url="")
+        # Use top product's image for the niche review
+        top_product = max(analyzed, key=lambda p: p.total_score)
+        post = TelegramPost(product=top_product, text=text, image_url=top_product.raw.image_url)
         post = await send_post(post)
         if post.published:
             save_post_engagement(

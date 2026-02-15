@@ -103,7 +103,8 @@ async def post_weekly_top(dry_run: bool = False) -> None:
         logger.info("Dry run — skipping publish")
     else:
         # Telegram
-        post = TelegramPost(product=products[0], text=text, image_url="")
+        # Use top product's image for the weekly top post
+        post = TelegramPost(product=products[0], text=text, image_url=products[0].raw.image_url)
         post = await send_post(post)
         if post.published:
             save_post_engagement(

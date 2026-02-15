@@ -1,9 +1,10 @@
-"""Algora Analytics — channel stats and product performance.
+"""Algora Analytics — channel stats, engagement, and product performance.
 
 Usage:
-    python -X utf8 -m scripts.analytics
-    python -X utf8 -m scripts.analytics --save    # save daily snapshot
-    python -X utf8 -m scripts.analytics --report   # full weekly report
+    python -X utf8 -m scripts.analytics                     # quick stats
+    python -X utf8 -m scripts.analytics --save               # save daily snapshot
+    python -X utf8 -m scripts.analytics --report             # full weekly report
+    python -X utf8 -m scripts.analytics --update-engagement  # fetch real views/likes
 """
 
 from __future__ import annotations
@@ -31,8 +32,85 @@ from src.db import (
     get_posts_by_type,
     get_posts_by_category,
     save_channel_stats,
+    get_posts_for_engagement_update,
+    update_post_engagement,
+    get_engagement_summary,
+    get_engagement_by_post_type,
+    get_engagement_by_category,
+    get_top_posts_by_views,
 )
+from src.engagement import fetch_telegram_views, fetch_vk_engagement
 from src.publish.telegram_bot import get_channel_info
+
+
+# ---------------------------------------------------------------------------
+# Engagement update
+# ---------------------------------------------------------------------------
+
+async def update_engagement() -> None:
+    """Fetch real engagement metrics for all tracked posts."""
+    init_db()
+    posts = get_posts_for_engagement_update()
+
+    if not posts:
+        logger.info("No posts to update engagement for")
+        return
+
+    logger.info("Updating engagement for {} posts...", len(posts))
+    updated = 0
+
+    for post in posts:
+        msg_id = post["message_id"]
+        platform = post["platform"]
+
+        if platform == "telegram":
+            data = await fetch_telegram_views(msg_id)
+            if data:
+                update_post_engagement(
+                    message_id=msg_id,
+                    platform="telegram",
+                    views=data.get("views", 0),
+                )
+                old_views = post["views"]
+                new_views = data["views"]
+                if new_views != old_views:
+                    logger.info("  TG msg={}: {} → {} views", msg_id, old_views, new_views)
+                updated += 1
+
+        elif platform == "vk":
+            data = await fetch_vk_engagement(msg_id)
+            if data:
+                update_post_engagement(
+                    message_id=msg_id,
+                    platform="vk",
+                    views=data.get("views", 0),
+                    forwards=data.get("reposts", 0),
+                    reactions=data.get("likes", 0),
+                )
+                updated += 1
+                logger.info(
+                    "  VK post={}: {} views, {} likes, {} reposts",
+                    msg_id, data.get("views", 0),
+                    data.get("likes", 0), data.get("reposts", 0),
+                )
+
+        # Rate limiting: small delay between requests
+        await asyncio.sleep(0.5)
+
+    logger.info("Engagement updated for {}/{} posts", updated, len(posts))
+
+
+# ---------------------------------------------------------------------------
+# Analytics display
+# ---------------------------------------------------------------------------
+
+TYPE_LABELS = {
+    "product": "Находка дня",
+    "niche_review": "Обзор ниши",
+    "weekly_top": "Топ недели",
+    "beginner_mistake": "Ошибка новичка",
+    "product_of_week": "Товар недели",
+}
 
 
 async def show_analytics(save_snapshot: bool = False) -> None:
@@ -55,6 +133,16 @@ async def show_analytics(save_snapshot: bool = False) -> None:
     if save_snapshot and subscribers > 0:
         save_channel_stats(subscribers, posts_count)
         print("  Снимок статистики сохранён")
+
+    # Engagement summary
+    eng = get_engagement_summary()
+    if eng and eng.get("total_views"):
+        print(f"\n  --- Вовлечённость ---")
+        print(f"  Всего просмотров: {eng['total_views']:,}")
+        print(f"  Средние просмотры: {eng['avg_views']:.0f}/пост")
+        print(f"  Макс просмотры: {eng['max_views']}")
+        if eng.get("total_forwards"):
+            print(f"  Пересылки: {eng['total_forwards']}")
 
     # History
     history = get_channel_stats_history(14)
@@ -95,7 +183,7 @@ async def show_analytics(save_snapshot: bool = False) -> None:
 
 
 async def show_weekly_report(save_snapshot: bool = False) -> None:
-    """Full weekly report: growth, posts by type, categories, top products."""
+    """Full weekly report: growth, engagement, posts by type, categories, top products."""
     init_db()
 
     print("\n" + "=" * 60)
@@ -124,7 +212,6 @@ async def show_weekly_report(save_snapshot: bool = False) -> None:
             days = len(history)
             avg_daily = growth / days if days > 0 else 0
 
-            # Find best and worst days
             reversed_history = list(reversed(history))
             best_day = ("", 0)
             worst_day = ("", 0)
@@ -145,19 +232,52 @@ async def show_weekly_report(save_snapshot: bool = False) -> None:
         else:
             print("  Недостаточно данных")
 
-    # Posts by type
+    # --- ENGAGEMENT ---
+    eng = get_engagement_summary()
+    if eng and eng.get("total_views"):
+        print(f"\n  --- Вовлечённость (Telegram) ---")
+        print(f"  Всего просмотров: {eng['total_views']:,}")
+        print(f"  Средние просмотры/пост: {eng['avg_views']:.0f}")
+        print(f"  Макс просмотры: {eng['max_views']}")
+        if eng.get("total_forwards"):
+            print(f"  Пересылки: {eng['total_forwards']}")
+        if eng.get("total_reactions"):
+            print(f"  Реакции: {eng['total_reactions']}")
+
+    # Engagement by post type
+    eng_by_type = get_engagement_by_post_type()
+    if eng_by_type:
+        print(f"\n  --- Просмотры по типам постов ---")
+        print(f"  {'Тип':<25} {'Постов':>7} {'Ср.просм.':>10} {'Макс':>7}")
+        print(f"  {'-'*25} {'-'*7} {'-'*10} {'-'*7}")
+        for row in eng_by_type:
+            label = TYPE_LABELS.get(row["post_type"], row["post_type"] or "Другое")
+            print(f"  {label:<25} {row['cnt']:>7} {row['avg_views']:>10.0f} {row['max_views']:>7}")
+
+    # Engagement by category
+    eng_by_cat = get_engagement_by_category()
+    if eng_by_cat:
+        print(f"\n  --- Просмотры по категориям ---")
+        print(f"  {'Категория':<25} {'Постов':>7} {'Ср.просм.':>10}")
+        print(f"  {'-'*25} {'-'*7} {'-'*10}")
+        for row in eng_by_cat[:10]:
+            print(f"  {row['category']:<25} {row['cnt']:>7} {row['avg_views']:>10.0f}")
+
+    # Top posts by views
+    top_viewed = get_top_posts_by_views(5)
+    if top_viewed:
+        print(f"\n  --- Топ-5 постов по просмотрам ---")
+        for i, p in enumerate(top_viewed, 1):
+            ptype = TYPE_LABELS.get(p["post_type"], p["post_type"] or "?")
+            cat = p["category"] or ""
+            print(f"  {i}. {p['views']} просм. | {ptype} | {cat} | score={p['total_score']:.1f}")
+
+    # Posts by type (count)
     by_type = get_posts_by_type()
     if by_type:
         print(f"\n  --- Посты по типам ---")
-        type_labels = {
-            "product": "Находка дня",
-            "niche_review": "Обзор ниши",
-            "weekly_top": "Топ недели",
-            "beginner_mistake": "Ошибка новичка",
-            "product_of_week": "Товар недели",
-        }
         for row in by_type:
-            label = type_labels.get(row["post_type"], row["post_type"] or "Без типа")
+            label = TYPE_LABELS.get(row["post_type"], row["post_type"] or "Без типа")
             print(f"  {label:<25} {row['cnt']:>5} постов")
 
     # Posts by category
@@ -193,11 +313,20 @@ def main() -> None:
         action="store_true",
         help="Show full weekly report",
     )
+    parser.add_argument(
+        "--update-engagement",
+        action="store_true",
+        help="Fetch real views/likes/reposts from Telegram and VK",
+    )
     args = parser.parse_args()
+
+    if args.update_engagement:
+        asyncio.run(update_engagement())
+        print()  # separator
 
     if args.report:
         asyncio.run(show_weekly_report(save_snapshot=args.save))
-    else:
+    elif not args.update_engagement:
         asyncio.run(show_analytics(save_snapshot=args.save))
 
 

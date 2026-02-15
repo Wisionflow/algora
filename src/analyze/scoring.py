@@ -5,17 +5,19 @@ from __future__ import annotations
 from loguru import logger
 
 from src.config import (
-    CNY_TO_RUB,
     COMPETITION_WEIGHT,
     MARGIN_WEIGHT,
     RELIABILITY_WEIGHT,
     TREND_WEIGHT,
+    get_cny_to_rub,
 )
 from src.models import AnalyzedProduct, RawProduct
 
 
-def estimate_costs(product: RawProduct, cny_rate: float = CNY_TO_RUB) -> dict:
+def estimate_costs(product: RawProduct, cny_rate: float | None = None) -> dict:
     """Estimate landed cost in Russia for a product."""
+    if cny_rate is None:
+        cny_rate = get_cny_to_rub()
     price_rub = product.price_cny * cny_rate
 
     # Rough delivery estimate: 15-25% of product cost for small electronics

@@ -1,5 +1,9 @@
 """Compose Telegram posts from analyzed products.
 
+Brand style: ALGORA — AI-аналитик китайского рынка.
+Tone: эксперт + партнёр. Уверенный, конкретный, без воды.
+Говорим цифрами, фактами, выгодой. Не говорим мотивацией.
+
 Post types:
 - compose_post()              — "Находка дня" (single product)
 - compose_niche_review()      — "Обзор ниши" (category overview with top products)
@@ -63,6 +67,10 @@ CATEGORY_TAGS: dict[str, str] = {
     "stationery": "#канцелярия",
 }
 
+# Brand separator for consistent header style
+_BRAND_SEP = "▸"
+_SECTION_LINE = "─ ─ ─ ─ ─ ─ ─ ─ ─ ─"
+
 
 def _premium_cta() -> str:
     """Return CTA footer for free channel posts when premium is enabled."""
@@ -77,17 +85,17 @@ def _trend_emoji(score: float) -> str:
         return "🔥"
     if score >= 5:
         return "📈"
-    return "➡️"
+    return "→"
 
 
 def _margin_emoji(pct: float) -> str:
     if pct >= 40:
-        return "💰"
-    if pct >= 20:
         return "✅"
+    if pct >= 20:
+        return "▲"
     if pct > 0:
         return "⚠️"
-    return "🚫"
+    return "✕"
 
 
 def _score_bar(score: float) -> str:
@@ -101,6 +109,25 @@ def _clean_insight(text: str) -> str:
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
     text = re.sub(r"^[Ии]нсайт\s*:\s*", "", text)
     return text.strip()
+
+
+def _is_valid_insight(text: str | None) -> bool:
+    """Check that ai_insight is a real insight, not an error or empty.
+
+    Error messages must NEVER appear in published posts.
+    """
+    if not text or not text.strip():
+        return False
+    _ERROR_MARKERS = [
+        "недоступен", "Error", "error", "API ключ", "authentication",
+        "401", "403", "500", "timeout", "Traceback",
+    ]
+    return not any(marker in text for marker in _ERROR_MARKERS)
+
+
+def _brand_footer(cat_tag: str) -> str:
+    """Consistent brand footer for all post types."""
+    return f"{cat_tag} #китай #1688 #wb #ozon #algora"
 
 
 # ---------------------------------------------------------------------------
@@ -117,25 +144,26 @@ def _compose_compact(product: AnalyzedProduct) -> str:
     cat_name = CATEGORY_NAMES.get(r.category, r.category)
 
     lines = [
-        f"🔍 <b>ALGORA | Находка дня</b>",
+        f"<b>ALGORA {_BRAND_SEP} Находка дня</b>",
         "",
-        f"📦 <b>{title}</b>",
-        f"📂 {cat_name}",
+        f"<b>{title}</b>",
+        f"{cat_name}",
         "",
-        f"💰 ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽) → В РФ: ~{p.total_landed_cost:.0f}₽",
+        f"Закупка: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)",
+        f"Себестоимость в РФ: ~{p.total_landed_cost:.0f}₽",
     ]
 
     if p.wb_competitors > 0:
-        lines.append(f"📊 WB: {p.wb_competitors} конкурентов, ~{p.wb_avg_price:.0f}₽")
+        lines.append(f"WB: {p.wb_competitors} продавцов · ~{p.wb_avg_price:.0f}₽")
 
-    lines.append(f"📈 Маржа: ~{p.margin_pct:.0f}% {margin_icon} | {_score_bar(p.total_score)} {p.total_score:.1f}")
+    lines.append(f"Маржа: {p.margin_pct:.0f}% {margin_icon} · {_score_bar(p.total_score)} {p.total_score:.1f}/10")
 
-    if p.ai_insight:
-        insight = _clean_insight(p.ai_insight)[:150]
-        lines.append(f"\n💡 {insight}")
+    if _is_valid_insight(p.ai_insight):
+        insight = _clean_insight(p.ai_insight)[:120]
+        lines.append(f"\n{insight}")
 
     if r.source_url:
-        lines.append(f'\n🔗 <a href="{r.source_url}">Фабрика</a>')
+        lines.append(f'\n<a href="{r.source_url}">Смотреть на фабрике →</a>')
 
     return "\n".join(lines)
 
@@ -155,7 +183,8 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
         if len(compact) <= 1024:
             return TelegramPost(product=product, text=compact, image_url=r.image_url)
 
-    # Full format (text-only or when compact doesn't fit)
+    # Full format (when compact doesn't fit 1024 chars)
+    # Keep image_url — publish layer will handle photo+text split
     title = r.title_ru or r.title_cn
     trend_icon = _trend_emoji(p.trend_score)
     margin_icon = _margin_emoji(p.margin_pct)
@@ -163,58 +192,82 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
 
     lines = [
-        f"🔍 <b>ALGORA | Находка дня</b>",
+        f"<b>ALGORA {_BRAND_SEP} Находка дня</b>",
         "",
-        f"📦 <b>{title}</b>",
+        f"<b>{title}</b>",
     ]
 
     if r.category:
-        lines.append(f"📂 {cat_name}")
+        lines.append(f"{cat_name}")
 
     lines.append("")
+    lines.append(_SECTION_LINE)
+    lines.append("")
 
-    price_line = f"💰 FOB: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)"
+    # --- Экономика ---
+    lines.append("<b>Экономика:</b>")
+    lines.append(f"FOB Китай: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)")
+
+    delivery_customs = p.delivery_cost_est + p.customs_duty_est
+    if delivery_customs > 0:
+        lines.append(f"Доставка + таможня: ~{delivery_customs:.0f}₽")
+
+    lines.append(f"Себестоимость в РФ: ~{p.total_landed_cost:.0f}₽")
+
+    if p.wb_avg_price > 0:
+        lines.append(f"Цена на WB: ~{p.wb_avg_price:.0f}₽")
+
+    margin_line = f"<b>Чистая маржа: ~{p.margin_pct:.0f}%"
+    if p.margin_rub != 0:
+        margin_line += f" ({p.margin_rub:.0f}₽/шт)"
+    margin_line += f"</b> {margin_icon}"
+    lines.append(margin_line)
+
     if r.min_order > 1:
-        price_line += f" | от {r.min_order} шт"
-    lines.append(price_line)
-    lines.append(f"🚚 В РФ: ~{p.total_landed_cost:.0f}₽/шт")
+        invest = r.min_order * p.total_landed_cost
+        lines.append(f"Мин. вход: {r.min_order} шт × {p.total_landed_cost:.0f}₽ = {invest:,.0f}₽")
 
     lines.append("")
-    lines.append("📊 <b>Аналитика:</b>")
+
+    # --- Рынок ---
+    lines.append("<b>Рынок:</b>")
 
     if r.sales_volume > 0:
-        lines.append(f"• Продажи CN: {r.sales_volume:,} шт/мес {trend_icon}")
+        lines.append(f"Продажи в Китае: {r.sales_volume:,} шт/мес {trend_icon}")
 
     if p.wb_competitors > 0:
-        lines.append(
-            f"• WB: {p.wb_competitors} конкурентов, ~{p.wb_avg_price:.0f}₽"
-        )
+        lines.append(f"Конкуренция на WB: {p.wb_competitors} продавцов")
 
-    if p.margin_pct != 0:
-        lines.append(f"• Маржа: ~{p.margin_pct:.0f}% {margin_icon}")
+    lines.append(f"Рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
 
-    lines.append(f"• Рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
-
-    if p.ai_insight:
-        insight = _clean_insight(p.ai_insight)
-        lines.append("")
-        lines.append(f"💡 {insight}")
-
+    # --- Поставщик ---
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"🏭 {r.supplier_name}"
+        supplier_info = f"<b>Поставщик:</b> {r.supplier_name}"
         if r.supplier_years > 0:
             supplier_info += f" ({r.supplier_years} лет)"
         lines.append(supplier_info)
 
-    if r.source_url:
-        lines.append(f'🔗 <a href="{r.source_url}">Смотреть на фабрике</a>')
-
     lines.append("")
-    lines.append(f"{cat_tag} #китай #маркетплейс #wb #ozon")
+    lines.append(_SECTION_LINE)
+    lines.append("")
+
+    # --- AI insight ---
+    if _is_valid_insight(p.ai_insight):
+        insight = _clean_insight(p.ai_insight)
+        lines.append(f"💡 {insight}")
+        lines.append("")
+
+    if r.source_url:
+        lines.append(f'<a href="{r.source_url}">Смотреть на фабрике →</a>')
+        lines.append("")
+
+    lines.append("Сохрани — пригодится при выборе ниши")
+    lines.append("")
+    lines.append(_brand_footer(cat_tag))
 
     text = "\n".join(lines) + _premium_cta()
-    return TelegramPost(product=product, text=text, image_url="")
+    return TelegramPost(product=product, text=text, image_url=r.image_url)
 
 
 # ---------------------------------------------------------------------------
@@ -243,36 +296,38 @@ def compose_niche_review(
     )
 
     lines = [
-        f"📊 <b>ALGORA | Обзор ниши: {cat_name}</b>",
+        f"<b>ALGORA {_BRAND_SEP} Обзор ниши: {cat_name}</b>",
         "",
-        f"Проанализировано товаров: {len(products)}",
+        f"Проанализировано: {len(products)} товаров",
         "",
-        f"📈 <b>Ключевые метрики:</b>",
-        f"• Средняя маржа: ~{avg_margin:.0f}% {_margin_emoji(avg_margin)}",
-        f"• Средний рейтинг: {avg_score:.1f}/10",
-        f"• Суммарные продажи CN: {total_sales:,} шт/мес",
-        f"• Среднее конкурентов на WB: ~{avg_competitors:.0f}",
+        _SECTION_LINE,
+        "",
+        f"<b>Ключевые метрики:</b>",
+        f"Средняя маржа: ~{avg_margin:.0f}% {_margin_emoji(avg_margin)}",
+        f"Средний рейтинг: {avg_score:.1f}/10",
+        f"Продажи в Китае: {total_sales:,} шт/мес",
+        f"Конкуренция на WB: ~{avg_competitors:.0f} продавцов",
     ]
 
     # Top 3 products
     top = sorted(products, key=lambda p: p.total_score, reverse=True)[:3]
     if top:
         lines.append("")
-        lines.append("🏆 <b>Топ-3 товара:</b>")
+        lines.append(f"<b>Топ-3 товара:</b>")
         for i, p in enumerate(top, 1):
             title = (p.raw.title_ru or p.raw.title_cn)[:45]
             lines.append(
                 f"{i}. {title}\n"
-                f"   Маржа: {p.margin_pct:.0f}% | {_score_bar(p.total_score)} {p.total_score:.1f}"
+                f"   Маржа: {p.margin_pct:.0f}% · {_score_bar(p.total_score)} {p.total_score:.1f}"
             )
 
-    if ai_summary:
+    if _is_valid_insight(ai_summary):
         summary = _clean_insight(ai_summary)
         lines.append("")
         lines.append(f"💡 {summary}")
 
     lines.append("")
-    lines.append(f"{cat_tag} #обзорниши #китай #маркетплейс #wb #ozon")
+    lines.append(_brand_footer(cat_tag))
 
     return "\n".join(lines) + _premium_cta()
 
@@ -288,9 +343,11 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
     Returns raw text. Takes already-sorted top products.
     """
     lines = [
-        "🏆 <b>ALGORA | Топ недели</b>",
+        f"<b>ALGORA {_BRAND_SEP} Топ недели</b>",
         "",
         "Лучшие находки за неделю по рейтингу и марже:",
+        "",
+        _SECTION_LINE,
         "",
     ]
 
@@ -301,14 +358,14 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
 
         lines.append(
             f"<b>{i}. {title}</b>\n"
-            f"   {cat_name} | Маржа: {p.margin_pct:.0f}% {margin_icon} | "
+            f"   {cat_name} · Маржа: {p.margin_pct:.0f}% {margin_icon} · "
             f"{_score_bar(p.total_score)} {p.total_score:.1f}/10"
         )
         lines.append("")
 
-    lines.append("Подробный разбор каждого товара — в постах канала выше ☝️")
+    lines.append("Подробный расчёт по каждому — в постах выше")
     lines.append("")
-    lines.append("#топнедели #китай #маркетплейс #wb #ozon")
+    lines.append("#топнедели #китай #1688 #wb #ozon #algora")
 
     return "\n".join(lines) + _premium_cta()
 
@@ -332,28 +389,31 @@ def compose_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> str
     cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
 
     lines = [
-        "⚠️ <b>ALGORA | Ошибка новичка</b>",
+        f"<b>ALGORA {_BRAND_SEP} Ошибка новичка</b>",
         "",
         f"Разбираем на примере: <b>{title}</b>",
-        f"📂 {cat_name}",
+        f"{cat_name}",
         "",
-        f"💰 FOB: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽) → В РФ: ~{p.total_landed_cost:.0f}₽",
+        _SECTION_LINE,
+        "",
+        f"Закупка: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽) → В РФ: ~{p.total_landed_cost:.0f}₽",
     ]
 
     if p.wb_avg_price > 0:
-        lines.append(f"📊 WB: ~{p.wb_avg_price:.0f}₽ | {p.wb_competitors} конкурентов")
+        lines.append(f"WB: ~{p.wb_avg_price:.0f}₽ · {p.wb_competitors} продавцов")
 
-    lines.append(f"📈 Маржа: ~{p.margin_pct:.0f}% {_margin_emoji(p.margin_pct)}")
+    lines.append(f"Маржа: ~{p.margin_pct:.0f}% {_margin_emoji(p.margin_pct)}")
     lines.append("")
 
     # AI-generated mistake analysis
-    mistake = _clean_insight(mistake_text)
-    lines.append(mistake)
+    if _is_valid_insight(mistake_text):
+        mistake = _clean_insight(mistake_text)
+        lines.append(mistake)
+        lines.append("")
 
+    lines.append("Сталкивались? Делитесь опытом в комментариях")
     lines.append("")
-    lines.append("💬 Сталкивались с такой ситуацией? Пишите в комментариях")
-    lines.append("")
-    lines.append(f"{cat_tag} #ошибкановичка #обучение #маркетплейс #wb #ozon")
+    lines.append(f"{cat_tag} #ошибкановичка #китай #1688 #wb #ozon #algora")
 
     return "\n".join(lines) + _premium_cta()
 
@@ -376,57 +436,58 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
     cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
 
     lines = [
-        "🏅 <b>ALGORA | Товар недели</b>",
+        f"<b>ALGORA {_BRAND_SEP} Товар недели</b>",
         "",
-        f"📦 <b>{title}</b>",
-        f"📂 {cat_name}",
+        f"<b>{title}</b>",
+        f"{cat_name}",
         "",
-        "━━━━━━━━━━━━━━━━━━━━",
+        _SECTION_LINE,
         "",
-        "<b>💰 Экономика:</b>",
-        f"• FOB Китай: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)",
-        f"• Доставка + таможня: ~{p.delivery_cost_est + p.customs_duty_est:.0f}₽",
-        f"• Себестоимость в РФ: ~{p.total_landed_cost:.0f}₽",
-        f"• Цена на WB: ~{p.wb_avg_price:.0f}₽",
-        f"• <b>Чистая маржа: ~{p.margin_pct:.0f}% ({p.margin_rub:.0f}₽/шт)</b> {_margin_emoji(p.margin_pct)}",
+        "<b>Экономика:</b>",
+        f"FOB Китай: ¥{r.price_cny:.0f} (~{p.price_rub:.0f}₽)",
+        f"Доставка + таможня: ~{p.delivery_cost_est + p.customs_duty_est:.0f}₽",
+        f"Себестоимость в РФ: ~{p.total_landed_cost:.0f}₽",
+        f"Цена на WB: ~{p.wb_avg_price:.0f}₽",
+        f"<b>Чистая маржа: ~{p.margin_pct:.0f}% ({p.margin_rub:.0f}₽/шт)</b> {_margin_emoji(p.margin_pct)}",
     ]
 
     if r.min_order > 1:
         invest = r.min_order * p.total_landed_cost
-        lines.append(f"• Мин. вход: {r.min_order} шт × {p.total_landed_cost:.0f}₽ = {invest:,.0f}₽")
+        lines.append(f"Мин. вход: {r.min_order} шт × {p.total_landed_cost:.0f}₽ = {invest:,.0f}₽")
 
     lines.append("")
-    lines.append("<b>📊 Рынок:</b>")
+    lines.append("<b>Рынок:</b>")
 
     if r.sales_volume > 0:
-        lines.append(f"• Продажи в Китае: {r.sales_volume:,} шт/мес {_trend_emoji(p.trend_score)}")
+        lines.append(f"Продажи в Китае: {r.sales_volume:,} шт/мес {_trend_emoji(p.trend_score)}")
 
-    lines.append(f"• Конкуренция на WB: {p.wb_competitors} продавцов")
-    lines.append(f"• Общий рейтинг: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
+    lines.append(f"Конкуренция на WB: {p.wb_competitors} продавцов")
+    lines.append(f"Рейтинг AI: {_score_bar(p.total_score)} {p.total_score:.1f}/10")
 
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"<b>🏭 Поставщик:</b> {r.supplier_name}"
+        supplier_info = f"<b>Поставщик:</b> {r.supplier_name}"
         if r.supplier_years > 0:
             supplier_info += f" ({r.supplier_years} лет)"
         lines.append(supplier_info)
 
     lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append(_SECTION_LINE)
     lines.append("")
 
     # AI deep analysis
-    analysis = _clean_insight(deep_analysis)
-    lines.append(f"🧠 <b>Экспертный разбор:</b>")
-    lines.append(analysis)
+    if _is_valid_insight(deep_analysis):
+        analysis = _clean_insight(deep_analysis)
+        lines.append(f"<b>Экспертный разбор:</b>")
+        lines.append(analysis)
 
     if r.source_url:
         lines.append("")
-        lines.append(f'🔗 <a href="{r.source_url}">Смотреть на фабрике</a>')
+        lines.append(f'<a href="{r.source_url}">Смотреть на фабрике →</a>')
 
     lines.append("")
-    lines.append("🔔 Сохрани пост, чтобы не потерять находку!")
+    lines.append("Сохраняй — пригодится при выборе ниши")
     lines.append("")
-    lines.append(f"{cat_tag} #товарнедели #разбор #китай #маркетплейс #wb #ozon")
+    lines.append(f"{cat_tag} #товарнедели #китай #1688 #wb #ozon #algora")
 
     return "\n".join(lines) + _premium_cta()

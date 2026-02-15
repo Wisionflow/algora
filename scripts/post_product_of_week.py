@@ -241,7 +241,7 @@ async def post_product_of_week(
         logger.info("Dry run — skipping publish")
     else:
         # Telegram
-        post = TelegramPost(product=product, text=text, image_url="")
+        post = TelegramPost(product=product, text=text, image_url=r.image_url)
         post = await send_post(post)
         if post.published:
             save_post_engagement(

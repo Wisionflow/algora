@@ -35,7 +35,7 @@ from src.compose.telegram_post import compose_post
 from src.compose.vk_post import compose_vk_post
 from src.publish.telegram_bot import send_post, send_post_to_channel
 from src.publish.vk_bot import send_vk_post
-from src.config import VK_API_TOKEN, PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID
+from src.config import VK_API_TOKEN, PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID, get_cny_to_rub
 from src.db import (
     init_db,
     save_raw_product,
@@ -44,6 +44,7 @@ from src.db import (
     save_published_vk_post,
     save_post_engagement,
     is_already_published,
+    is_image_already_published,
 )
 from src.models import AnalyzedProduct
 
@@ -82,6 +83,7 @@ async def run(
 ) -> None:
     logger.info("=== ALGORA Pipeline START ===")
     logger.info("Source: {}, Category: {}, Dry run: {}", source, category, dry_run)
+    logger.info("CNY/RUB rate: {:.2f} (CBR)", get_cny_to_rub())
 
     # Init DB
     init_db()
@@ -200,6 +202,11 @@ async def run(
         product.ai_insight = await generate_insight(product)
         save_analyzed_product(product)
 
+        # Check for duplicate images — better no photo than a repeated one
+        if product.raw.image_url and is_image_already_published(product.raw.image_url):
+            logger.warning("Duplicate image detected, removing: {}", product.raw.image_url[:60])
+            product.raw.image_url = ""
+
         logger.info("--- Post {}/{}: COMPOSE ---", idx, len(top))
         post = compose_post(product)
         logger.info("Post {} composed ({} chars)", idx, len(post.text))
@@ -235,6 +242,7 @@ async def run(
                 save_published_post(
                     post, platform="telegram",
                     post_type="product", category=product.raw.category,
+                    image_url=product.raw.image_url,
                 )
                 save_post_engagement(
                     message_id=post.message_id,
@@ -261,6 +269,7 @@ async def run(
                     save_published_vk_post(
                         product.raw.source_url, vk_text, vk_result["post_id"],
                         post_type="product", category=product.raw.category,
+                        image_url=product.raw.image_url,
                     )
                     logger.info("Post {} published to VK!", idx)
                 else:

@@ -45,10 +45,13 @@ def _build_product_prompt(product: AnalyzedProduct) -> str:
 
 
 async def generate_insight(product: AnalyzedProduct) -> str:
-    """Generate AI insight for a product using Claude."""
+    """Generate AI insight for a product using Claude.
+
+    Returns empty string on any failure — errors must NEVER leak into posts.
+    """
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set, skipping AI analysis")
-        return "ИИ-анализ недоступен (API ключ не настроен)"
+        return ""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -64,4 +67,4 @@ async def generate_insight(product: AnalyzedProduct) -> str:
         return insight
     except Exception as e:
         logger.error("Claude API error: {}", e)
-        return f"ИИ-анализ недоступен: {e}"
+        return ""

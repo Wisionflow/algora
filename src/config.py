@@ -44,8 +44,51 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 ]
 
-# Exchange rates (will be updated dynamically later)
-CNY_TO_RUB = 12.5  # fallback rate
+# Exchange rates
+CNY_TO_RUB_FALLBACK = 12.5  # used when CBR API is unreachable
+_cny_rate_cache: dict = {}  # {"rate": float, "fetched_at": datetime}
+
+
+def get_cny_to_rub() -> float:
+    """Get current CNY/RUB rate from CBR API with 24h cache.
+
+    Falls back to CNY_TO_RUB_FALLBACK if API is unreachable.
+    """
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timedelta, timezone
+
+    import httpx
+
+    # Check cache (valid for 24 hours)
+    if _cny_rate_cache:
+        age = datetime.now(timezone.utc) - _cny_rate_cache["fetched_at"]
+        if age < timedelta(hours=24):
+            return _cny_rate_cache["rate"]
+
+    try:
+        resp = httpx.get("https://www.cbr.ru/scripts/XML_daily.asp", timeout=10)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+
+        for valute in root.findall("Valute"):
+            char_code = valute.findtext("CharCode", "")
+            if char_code == "CNY":
+                nominal = int(valute.findtext("Nominal", "1"))
+                value_str = valute.findtext("Value", "0").replace(",", ".")
+                rate = float(value_str) / nominal
+                _cny_rate_cache["rate"] = rate
+                _cny_rate_cache["fetched_at"] = datetime.now(timezone.utc)
+                return rate
+
+    except Exception:
+        pass
+
+    return _cny_rate_cache.get("rate", CNY_TO_RUB_FALLBACK)
+
+
+# Legacy constant — modules that import CNY_TO_RUB still work,
+# but scoring.py now uses get_cny_to_rub() for live rates
+CNY_TO_RUB = CNY_TO_RUB_FALLBACK
 
 # Scoring weights
 TREND_WEIGHT = 0.35
@@ -54,5 +97,5 @@ MARGIN_WEIGHT = 0.30
 RELIABILITY_WEIGHT = 0.10
 
 # Content
-MAX_POSTS_PER_DAY = 2
+MAX_POSTS_PER_DAY = 3
 POST_MAX_LENGTH = 1500
