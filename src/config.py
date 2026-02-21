@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from loguru import logger
 
 # Project root
 ROOT_DIR = Path(__file__).parent.parent
@@ -12,6 +13,9 @@ DATA_DIR.mkdir(exist_ok=True)
 
 # Load .env
 load_dotenv(ROOT_DIR / ".env")
+
+# File logging
+logger.add(DATA_DIR / "algora.log", rotation="1 MB", retention="7 days", level="INFO")
 
 # Claude API
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

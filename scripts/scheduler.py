@@ -23,7 +23,7 @@ import asyncio
 import os
 import random
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -77,7 +77,7 @@ def _pick_category() -> str:
 
 def _decide_post_type() -> str:
     """Decide post type based on day of week and time of day."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     dow = now.isoweekday()  # 1=Mon, 7=Sun
     hour = now.hour
 
