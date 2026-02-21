@@ -166,6 +166,26 @@ def _deduplicate_title(text: str) -> str:
     return " ".join(seen)
 
 
+def _has_cjk(text: str) -> bool:
+    """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _format_supplier(name: str, years: int, html: bool = True) -> str:
+    """Format supplier info, replacing CJK-only names with a generic label."""
+    if _has_cjk(name):
+        label = "Китайская фабрика"
+    else:
+        label = name
+    if html:
+        info = f"<b>Поставщик:</b> {label}"
+    else:
+        info = f"Поставщик: {label}"
+    if years > 0:
+        info += f" ({years} лет)"
+    return info
+
+
 def _brand_footer(cat_tag: str) -> str:
     """Consistent brand footer for all post types."""
     return f"{cat_tag} #китай #1688 #wb #ozon #algora"
@@ -293,10 +313,7 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     # --- Поставщик ---
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"<b>Поставщик:</b> {r.supplier_name}"
-        if r.supplier_years > 0:
-            supplier_info += f" ({r.supplier_years} лет)"
-        lines.append(supplier_info)
+        lines.append(_format_supplier(r.supplier_name, r.supplier_years, html=True))
 
     lines.append("")
     lines.append(_SECTION_LINE)
@@ -523,10 +540,7 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
 
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"<b>Поставщик:</b> {r.supplier_name}"
-        if r.supplier_years > 0:
-            supplier_info += f" ({r.supplier_years} лет)"
-        lines.append(supplier_info)
+        lines.append(_format_supplier(r.supplier_name, r.supplier_years, html=True))
 
     lines.append("")
     lines.append(_SECTION_LINE)

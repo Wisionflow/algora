@@ -21,6 +21,7 @@ from src.compose.telegram_post import (
     _sanitize_post,
     _smart_truncate,
     _deduplicate_title,
+    _format_supplier,
     _BRAND_SEP,
     _SECTION_LINE,
 )
@@ -121,10 +122,7 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
     # --- Поставщик ---
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"Поставщик: {r.supplier_name}"
-        if r.supplier_years > 0:
-            supplier_info += f" ({r.supplier_years} лет)"
-        lines.append(supplier_info)
+        lines.append(_format_supplier(r.supplier_name, r.supplier_years, html=False))
 
     lines.append("")
     lines.append(_SECTION_LINE)
@@ -336,10 +334,7 @@ def compose_vk_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> 
 
     if r.supplier_name:
         lines.append("")
-        supplier_info = f"Поставщик: {r.supplier_name}"
-        if r.supplier_years > 0:
-            supplier_info += f" ({r.supplier_years} лет)"
-        lines.append(supplier_info)
+        lines.append(_format_supplier(r.supplier_name, r.supplier_years, html=False))
 
     lines.append("")
     lines.append(_SECTION_LINE)
