@@ -125,6 +125,22 @@ def _is_valid_insight(text: str | None) -> bool:
     return not any(marker in text for marker in _ERROR_MARKERS)
 
 
+def _sanitize_post(text: str) -> str:
+    """Remove leaked error messages and clean up empty lines."""
+    _ERROR_PATTERNS = [
+        r"ИИ-анализ недоступен:[^\n]*",
+        r"Error code: \d+[^\n]*",
+        r"\{['\"]type['\"]:\s*['\"]error['\"][^\n]*",
+        r"Traceback[^\n]*",
+        r"authentication_error[^\n]*",
+    ]
+    for pattern in _ERROR_PATTERNS:
+        text = re.sub(pattern, "", text)
+    # Collapse 3+ consecutive newlines into 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _brand_footer(cat_tag: str) -> str:
     """Consistent brand footer for all post types."""
     return f"{cat_tag} #китай #1688 #wb #ozon #algora"
@@ -179,7 +195,7 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
 
     # Try compact format first if there's an image
     if r.image_url:
-        compact = _compose_compact(product) + _premium_cta()
+        compact = _sanitize_post(_compose_compact(product) + _premium_cta())
         if len(compact) <= 1024:
             return TelegramPost(product=product, text=compact, image_url=r.image_url)
 
@@ -282,7 +298,7 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
     lines.append("")
     lines.append(_brand_footer(cat_tag))
 
-    text = "\n".join(lines) + _premium_cta()
+    text = _sanitize_post("\n".join(lines) + _premium_cta())
     return TelegramPost(product=product, text=text, image_url=r.image_url)
 
 
@@ -345,7 +361,7 @@ def compose_niche_review(
     lines.append("")
     lines.append(_brand_footer(cat_tag))
 
-    return "\n".join(lines) + _premium_cta()
+    return _sanitize_post("\n".join(lines) + _premium_cta())
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +399,7 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
     lines.append("")
     lines.append("#топнедели #китай #1688 #wb #ozon #algora")
 
-    return "\n".join(lines) + _premium_cta()
+    return _sanitize_post("\n".join(lines) + _premium_cta())
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +447,7 @@ def compose_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> str
     lines.append("")
     lines.append(f"{cat_tag} #ошибкановичка #китай #1688 #wb #ozon #algora")
 
-    return "\n".join(lines) + _premium_cta()
+    return _sanitize_post("\n".join(lines) + _premium_cta())
 
 
 # ---------------------------------------------------------------------------
@@ -506,4 +522,4 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
     lines.append("")
     lines.append(f"{cat_tag} #товарнедели #китай #1688 #wb #ozon #algora")
 
-    return "\n".join(lines) + _premium_cta()
+    return _sanitize_post("\n".join(lines) + _premium_cta())

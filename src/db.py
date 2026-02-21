@@ -330,6 +330,57 @@ def is_already_published(source_url: str, platform: str = "telegram") -> bool:
         conn.close()
 
 
+def _extract_offer_id(url: str) -> str:
+    """Extract offer ID from 1688.com or alibaba.com product URL."""
+    import re
+    # 1688: offerId=588538855156
+    m = re.search(r"offerId=(\d+)", url)
+    if m:
+        return m.group(1)
+    # Alibaba: /product-detail/..._1600409619233.html
+    m = re.search(r"_(\d{10,})\.html", url)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def is_product_recently_published(source_url: str, days: int = 14) -> bool:
+    """Check if product with this source_url was published recently on ANY platform.
+
+    Also checks by offer_id extracted from URL to catch duplicates with
+    different URL parameters (e.g. different uuid in 1688.com links).
+    """
+    conn = get_connection()
+    try:
+        cutoff = (
+            datetime.now(timezone.utc)
+            - __import__("datetime").timedelta(days=days)
+        ).isoformat()
+
+        # Check exact URL match (any platform)
+        row = conn.execute(
+            "SELECT 1 FROM published_posts WHERE source_url = ? AND published_at > ?",
+            (source_url, cutoff),
+        ).fetchone()
+        if row:
+            return True
+
+        # Check by offer_id
+        offer_id = _extract_offer_id(source_url)
+        if offer_id:
+            rows = conn.execute(
+                "SELECT source_url FROM published_posts WHERE published_at > ?",
+                (cutoff,),
+            ).fetchall()
+            for r in rows:
+                if _extract_offer_id(r["source_url"]) == offer_id:
+                    return True
+
+        return False
+    finally:
+        conn.close()
+
+
 def save_channel_stats(subscribers: int, posts_total: int) -> None:
     """Save daily channel statistics snapshot."""
     conn = get_connection()

@@ -18,6 +18,7 @@ from src.compose.telegram_post import (
     _score_bar,
     _clean_insight,
     _is_valid_insight,
+    _sanitize_post,
     _BRAND_SEP,
     _SECTION_LINE,
 )
@@ -148,7 +149,7 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
     lines.append("")
     lines.append(_brand_footer_vk(cat_tag))
 
-    return "\n".join(lines)
+    return _sanitize_post("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +206,7 @@ def compose_vk_niche_review(
     lines.append("")
     lines.append(_brand_footer_vk(cat_tag))
 
-    return "\n".join(lines)
+    return _sanitize_post("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +243,7 @@ def compose_vk_weekly_top(products: list[AnalyzedProduct]) -> str:
     lines.append("")
     lines.append("t.me/algora_trends")
 
-    return "\n".join(lines)
+    return _sanitize_post("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +287,7 @@ def compose_vk_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> 
     lines.append("")
     lines.append("Больше разборов в Telegram: t.me/algora_trends")
 
-    return "\n".join(lines)
+    return _sanitize_post("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -358,4 +359,4 @@ def compose_vk_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> 
     lines.append("")
     lines.append("Подробнее в Telegram: t.me/algora_trends")
 
-    return "\n".join(lines)
+    return _sanitize_post("\n".join(lines))

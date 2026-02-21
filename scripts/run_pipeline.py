@@ -46,6 +46,7 @@ from src.db import (
     save_post_engagement,
     is_already_published,
     is_image_already_published,
+    is_product_recently_published,
 )
 from src.models import AnalyzedProduct
 
@@ -223,6 +224,11 @@ async def run(
     premium_count = 2  # top N go to premium
     published_count = 0
     for idx, product in enumerate(top, 1):
+        # Skip recently published products (cross-platform dedup by offer_id)
+        if is_product_recently_published(product.raw.source_url, days=14):
+            logger.info("Skipping recently published: {}", product.raw.title_ru[:40])
+            continue
+
         logger.info("--- Post {}/{}: AI INSIGHT ---", idx, len(top))
         product.ai_insight = await generate_insight(product)
         save_analyzed_product(product)
