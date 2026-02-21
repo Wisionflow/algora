@@ -10,3 +10,18 @@ build/
 .claude/settings.json
 .claude/settings.local.json
 nul
+
+# Node.js (algora-vk-ad)
+node_modules/
+algora-vk-ad/
+
+# Media
+*.mp4
+
+# Generated
+data/dashboard.html
+*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
