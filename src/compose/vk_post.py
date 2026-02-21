@@ -19,6 +19,8 @@ from src.compose.telegram_post import (
     _clean_insight,
     _is_valid_insight,
     _sanitize_post,
+    _smart_truncate,
+    _deduplicate_title,
     _BRAND_SEP,
     _SECTION_LINE,
 )
@@ -52,11 +54,11 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
     p = product
     r = product.raw
 
-    title = r.title_ru or r.title_cn
+    title = _deduplicate_title(r.title_ru or r.title_cn)
     trend_icon = _trend_emoji(p.trend_score)
     margin_icon = _margin_emoji(p.margin_pct)
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"ALGORA {_BRAND_SEP} Находка дня",
@@ -163,8 +165,8 @@ def compose_vk_niche_review(
     ai_summary: str = "",
 ) -> str:
     """Build a VK niche review post for a category."""
-    cat_name = CATEGORY_NAMES.get(category, category)
-    cat_tag = CATEGORY_TAGS.get(category, f"#{category}")
+    cat_name = CATEGORY_NAMES.get(category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(category, "#разное")
 
     avg_margin = sum(p.margin_pct for p in products) / len(products) if products else 0
     avg_score = sum(p.total_score for p in products) / len(products) if products else 0
@@ -192,7 +194,7 @@ def compose_vk_niche_review(
         lines.append("")
         lines.append("Топ-3 товара:")
         for i, p in enumerate(top, 1):
-            title = (p.raw.title_ru or p.raw.title_cn)[:45]
+            title = _smart_truncate(_deduplicate_title(p.raw.title_ru or p.raw.title_cn), 45)
             lines.append(
                 f"{i}. {title}\n"
                 f"   Маржа: {p.margin_pct:.0f}% · {_score_bar(p.total_score)} {p.total_score:.1f}"
@@ -226,8 +228,8 @@ def compose_vk_weekly_top(products: list[AnalyzedProduct]) -> str:
     ]
 
     for i, p in enumerate(products[:5], 1):
-        title = (p.raw.title_ru or p.raw.title_cn)[:40]
-        cat_name = CATEGORY_NAMES.get(p.raw.category, p.raw.category)
+        title = _smart_truncate(_deduplicate_title(p.raw.title_ru or p.raw.title_cn), 40)
+        cat_name = CATEGORY_NAMES.get(p.raw.category, "Разное")
         margin_icon = _margin_emoji(p.margin_pct)
 
         lines.append(
@@ -255,9 +257,9 @@ def compose_vk_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> 
     """Build a VK 'beginner mistake' educational post."""
     p = product
     r = product.raw
-    title = (r.title_ru or r.title_cn)[:50]
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    title = _smart_truncate(_deduplicate_title(r.title_ru or r.title_cn), 50)
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"ALGORA {_BRAND_SEP} Ошибка новичка",
@@ -299,9 +301,9 @@ def compose_vk_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> 
     """Build a VK detailed 'product of the week' post."""
     p = product
     r = product.raw
-    title = r.title_ru or r.title_cn
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    title = _deduplicate_title(r.title_ru or r.title_cn)
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"ALGORA {_BRAND_SEP} Товар недели",

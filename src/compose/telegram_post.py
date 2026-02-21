@@ -41,6 +41,7 @@ CATEGORY_NAMES: dict[str, str] = {
     "jewelry": "Украшения",
     "tools": "Инструменты",
     "stationery": "Канцелярия",
+    "all": "Разное",
 }
 
 # Hashtags per category
@@ -65,6 +66,7 @@ CATEGORY_TAGS: dict[str, str] = {
     "jewelry": "#украшения",
     "tools": "#инструменты",
     "stationery": "#канцелярия",
+    "all": "#разное",
 }
 
 # Brand separator for consistent header style
@@ -141,6 +143,29 @@ def _sanitize_post(text: str) -> str:
     return text.strip()
 
 
+def _smart_truncate(text: str, max_len: int = 60) -> str:
+    """Truncate at word boundary, remove trailing punctuation."""
+    if not text or len(text) <= max_len:
+        return text or ""
+    truncated = text[:max_len].rsplit(" ", 1)[0]
+    return truncated.rstrip(",. ")
+
+
+def _deduplicate_title(text: str) -> str:
+    """Remove repeated words/phrases in product titles.
+
+    E.g. 'электрический чайник бытовой электрический чайник' ->
+         'электрический чайник бытовой'
+    """
+    words = text.split()
+    seen: list[str] = []
+    for w in words:
+        w_lower = w.lower()
+        if w_lower not in [s.lower() for s in seen]:
+            seen.append(w)
+    return " ".join(seen)
+
+
 def _brand_footer(cat_tag: str) -> str:
     """Consistent brand footer for all post types."""
     return f"{cat_tag} #китай #1688 #wb #ozon #algora"
@@ -155,9 +180,9 @@ def _compose_compact(product: AnalyzedProduct) -> str:
     """Compact post text that fits within Telegram's 1024-char photo caption limit."""
     p = product
     r = product.raw
-    title = (r.title_ru or r.title_cn)[:50]
+    title = _smart_truncate(_deduplicate_title(r.title_ru or r.title_cn), 50)
     margin_icon = _margin_emoji(p.margin_pct)
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
 
     lines = [
         f"<b>ALGORA {_BRAND_SEP} Находка дня</b>",
@@ -201,11 +226,11 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
 
     # Full format (when compact doesn't fit 1024 chars)
     # Keep image_url — publish layer will handle photo+text split
-    title = r.title_ru or r.title_cn
+    title = _deduplicate_title(r.title_ru or r.title_cn)
     trend_icon = _trend_emoji(p.trend_score)
     margin_icon = _margin_emoji(p.margin_pct)
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"<b>ALGORA {_BRAND_SEP} Находка дня</b>",
@@ -316,8 +341,8 @@ def compose_niche_review(
 
     Returns raw text (not TelegramPost) since it's not tied to one product.
     """
-    cat_name = CATEGORY_NAMES.get(category, category)
-    cat_tag = CATEGORY_TAGS.get(category, f"#{category}")
+    cat_name = CATEGORY_NAMES.get(category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(category, "#разное")
 
     # Aggregate stats
     avg_margin = sum(p.margin_pct for p in products) / len(products) if products else 0
@@ -347,7 +372,7 @@ def compose_niche_review(
         lines.append("")
         lines.append(f"<b>Топ-3 товара:</b>")
         for i, p in enumerate(top, 1):
-            title = (p.raw.title_ru or p.raw.title_cn)[:45]
+            title = _smart_truncate(_deduplicate_title(p.raw.title_ru or p.raw.title_cn), 45)
             lines.append(
                 f"{i}. {title}\n"
                 f"   Маржа: {p.margin_pct:.0f}% · {_score_bar(p.total_score)} {p.total_score:.1f}"
@@ -384,8 +409,8 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
     ]
 
     for i, p in enumerate(products[:5], 1):
-        title = (p.raw.title_ru or p.raw.title_cn)[:40]
-        cat_name = CATEGORY_NAMES.get(p.raw.category, p.raw.category)
+        title = _smart_truncate(_deduplicate_title(p.raw.title_ru or p.raw.title_cn), 40)
+        cat_name = CATEGORY_NAMES.get(p.raw.category, "Разное")
         margin_icon = _margin_emoji(p.margin_pct)
 
         lines.append(
@@ -416,9 +441,9 @@ def compose_beginner_mistake(product: AnalyzedProduct, mistake_text: str) -> str
     """
     p = product
     r = product.raw
-    title = (r.title_ru or r.title_cn)[:50]
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    title = _smart_truncate(_deduplicate_title(r.title_ru or r.title_cn), 50)
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"<b>ALGORA {_BRAND_SEP} Ошибка новичка</b>",
@@ -463,9 +488,9 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
     """
     p = product
     r = product.raw
-    title = r.title_ru or r.title_cn
-    cat_name = CATEGORY_NAMES.get(r.category, r.category)
-    cat_tag = CATEGORY_TAGS.get(r.category, f"#{r.category}")
+    title = _deduplicate_title(r.title_ru or r.title_cn)
+    cat_name = CATEGORY_NAMES.get(r.category, "Разное")
+    cat_tag = CATEGORY_TAGS.get(r.category, "#разное")
 
     lines = [
         f"<b>ALGORA {_BRAND_SEP} Товар недели</b>",
