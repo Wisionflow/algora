@@ -156,6 +156,19 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass  # Columns already exist
 
+    # Migrate: backfill NULL post_type/category in published_posts
+    updated = conn.execute(
+        "UPDATE published_posts SET post_type = 'product' WHERE post_type IS NULL"
+    ).rowcount
+    if updated:
+        logger.debug("Backfilled post_type for {} published posts", updated)
+    updated = conn.execute(
+        "UPDATE published_posts SET category = 'all' WHERE category IS NULL OR category = ''"
+    ).rowcount
+    if updated:
+        logger.debug("Backfilled category for {} published posts", updated)
+    conn.commit()
+
     conn.close()
     logger.info("Database initialized at {}", DB_PATH)
 
@@ -259,8 +272,8 @@ def save_published_post(
                 post.message_id,
                 platform,
                 datetime.now(timezone.utc).isoformat(),
-                post_type,
-                category,
+                post_type or "product",
+                category or "all",
                 image_url,
             ),
         )
@@ -290,8 +303,8 @@ def save_published_vk_post(
                 post_id,
                 "vk",
                 datetime.now(timezone.utc).isoformat(),
-                post_type,
-                category,
+                post_type or "product",
+                category or "all",
                 image_url,
             ),
         )
