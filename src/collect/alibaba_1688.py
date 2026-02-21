@@ -248,6 +248,12 @@ class Collector1688(BaseCollector):
         if not source_url:
             return None
 
+        # Reject search/listing URLs — only accept direct product pages
+        _SEARCH_PATTERNS = ["trade/search", "SearchText=", "/categorys/", "/catalog/"]
+        if any(p in source_url for p in _SEARCH_PATTERNS):
+            logger.debug("Skipping search URL: {}", source_url[:80])
+            return None
+
         # Price — try multiple sources: integer+decimal, price string, quantity_prices
         price_cny = 0.0
         if item.get("price_integer") is not None:

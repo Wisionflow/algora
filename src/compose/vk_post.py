@@ -22,6 +22,7 @@ from src.compose.telegram_post import (
     _smart_truncate,
     _deduplicate_title,
     _format_supplier,
+    _is_product_url,
     _BRAND_SEP,
     _SECTION_LINE,
 )
@@ -141,7 +142,7 @@ def compose_vk_post(product: AnalyzedProduct) -> str:
             lines.append(f"🔍 Ключевые слова для WB: {', '.join(keywords)}")
             lines.append("")
 
-    if r.source_url:
+    if r.source_url and _is_product_url(r.source_url):
         lines.append(f"Смотреть на фабрике: {r.source_url}")
         lines.append("")
 
@@ -345,7 +346,7 @@ def compose_vk_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> 
         lines.append("Экспертный разбор:")
         lines.append(analysis)
 
-    if r.source_url:
+    if r.source_url and _is_product_url(r.source_url):
         lines.append("")
         lines.append(f"Смотреть на фабрике: {r.source_url}")
 

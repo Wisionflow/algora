@@ -186,6 +186,14 @@ def _format_supplier(name: str, years: int, html: bool = True) -> str:
     return info
 
 
+def _is_product_url(url: str) -> bool:
+    """Check if URL is a direct product link (not a search/listing page)."""
+    if not url:
+        return False
+    _SEARCH_MARKERS = ["trade/search", "SearchText=", "/categorys/", "/catalog/"]
+    return not any(m in url for m in _SEARCH_MARKERS)
+
+
 def _brand_footer(cat_tag: str) -> str:
     """Consistent brand footer for all post types."""
     return f"{cat_tag} #китай #1688 #wb #ozon #algora"
@@ -223,7 +231,7 @@ def _compose_compact(product: AnalyzedProduct) -> str:
         insight = _clean_insight(p.ai_insight)[:120]
         lines.append(f"\n{insight}")
 
-    if r.source_url:
+    if r.source_url and _is_product_url(r.source_url):
         lines.append(f'\n<a href="{r.source_url}">Смотреть на фабрике →</a>')
 
     return "\n".join(lines)
@@ -332,7 +340,7 @@ def compose_post(product: AnalyzedProduct) -> TelegramPost:
             lines.append(f"🔍 <b>Ключевые слова для WB:</b> {', '.join(keywords)}")
             lines.append("")
 
-    if r.source_url:
+    if r.source_url and _is_product_url(r.source_url):
         lines.append(f'<a href="{r.source_url}">Смотреть на фабрике →</a>')
         lines.append("")
 
@@ -552,7 +560,7 @@ def compose_product_of_week(product: AnalyzedProduct, deep_analysis: str) -> str
         lines.append(f"<b>Экспертный разбор:</b>")
         lines.append(analysis)
 
-    if r.source_url:
+    if r.source_url and _is_product_url(r.source_url):
         lines.append("")
         lines.append(f'<a href="{r.source_url}">Смотреть на фабрике →</a>')
 
