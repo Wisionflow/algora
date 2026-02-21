@@ -32,11 +32,15 @@ from src.collect.wb_analytics import get_wb_market_data
 from src.analyze.scoring import analyze_product
 from src.analyze.ai_analysis import generate_insight
 from src.analyze.keywords import generate_keywords
+from src.analyze.image_validator import validate_product_image
 from src.compose.telegram_post import compose_post
 from src.compose.vk_post import compose_vk_post
 from src.publish.telegram_bot import send_post, send_post_to_channel
 from src.publish.vk_bot import send_vk_post
-from src.config import VK_API_TOKEN, PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID, get_cny_to_rub
+from src.config import (
+    VK_API_TOKEN, PREMIUM_ENABLED, TELEGRAM_PREMIUM_CHANNEL_ID,
+    IMAGE_VALIDATION_ENABLED, IMAGE_VISION_ENABLED, get_cny_to_rub,
+)
 from src.db import (
     init_db,
     save_raw_product,
@@ -237,6 +241,18 @@ async def run(
         if product.raw.image_url and is_image_already_published(product.raw.image_url):
             logger.warning("Duplicate image detected, removing: {}", product.raw.image_url[:60])
             product.raw.image_url = ""
+
+        # Validate image quality (3-level: URL rules → HTTP check → Vision)
+        if product.raw.image_url and IMAGE_VALIDATION_ENABLED:
+            img_valid, img_reason = await validate_product_image(
+                image_url=product.raw.image_url,
+                product_title=product.raw.title_ru or "",
+                product_category=product.raw.category or "",
+                use_vision=IMAGE_VISION_ENABLED,
+            )
+            if not img_valid:
+                logger.info("Dropping image for '{}': {}", product.raw.title_ru[:40], img_reason)
+                product.raw.image_url = ""
 
         logger.info("--- Post {}/{}: COMPOSE ---", idx, len(top))
         post = compose_post(product)
