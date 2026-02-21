@@ -2,12 +2,8 @@ name: Algora Autopost
 
 on:
   schedule:
-    # Morning post: 07:00 UTC = 10:00 MSK
-    - cron: "0 7 * * *"
-    # Afternoon post: 11:00 UTC = 14:00 MSK
-    - cron: "0 11 * * *"
-    # Evening post: 15:00 UTC = 18:00 MSK
-    - cron: "0 15 * * *"
+    # Once daily: 16:00 UTC = 19:00 MSK — optimal time for marketplace sellers
+    - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       post_type:
@@ -83,32 +79,17 @@ jobs:
         run: |
           POST_TYPE="${{ github.event.inputs.post_type || 'auto' }}"
           if [ "$POST_TYPE" = "auto" ]; then
-            # Auto-select based on day of week
+            # Auto-select based on day of week (1 post/day at 19:00 MSK)
             DOW=$(date -u +%u)  # 1=Mon, 7=Sun
-            HOUR=$(date -u +%H)
-            # 3 posts/day: 07:00 (morning), 11:00 (afternoon), 15:00 (evening) UTC
-            if [ "$DOW" = "7" ] && [ "$HOUR" -ge "14" ]; then
-              # Sunday evening = weekly top
-              POST_TYPE="weekly_top"
-            elif [ "$DOW" = "3" ] && [ "$HOUR" -lt "8" ]; then
-              # Wednesday morning = niche review
-              POST_TYPE="niche_review"
-            elif [ "$DOW" = "5" ] && [ "$HOUR" -lt "8" ]; then
-              # Friday morning = beginner mistake
-              POST_TYPE="beginner_mistake"
-            elif [ "$DOW" = "6" ] && [ "$HOUR" -ge "10" ] && [ "$HOUR" -lt "12" ]; then
-              # Saturday afternoon = product of week
-              POST_TYPE="product_of_week"
-            elif [ "$DOW" = "2" ] && [ "$HOUR" -ge "10" ] && [ "$HOUR" -lt "12" ]; then
-              # Tuesday afternoon = niche review
-              POST_TYPE="niche_review"
-            elif [ "$DOW" = "4" ] && [ "$HOUR" -ge "14" ]; then
-              # Thursday evening = beginner mistake
-              POST_TYPE="beginner_mistake"
-            else
-              # All other slots = regular product post
-              POST_TYPE="product"
-            fi
+            case "$DOW" in
+              1) POST_TYPE="product" ;;           # Mon — product
+              2) POST_TYPE="niche_review" ;;      # Tue — niche review
+              3) POST_TYPE="product" ;;           # Wed — product
+              4) POST_TYPE="beginner_mistake" ;;  # Thu — beginner mistake
+              5) POST_TYPE="product" ;;           # Fri — product
+              6) POST_TYPE="product_of_week" ;;   # Sat — product of week
+              7) POST_TYPE="weekly_top" ;;        # Sun — weekly top
+            esac
           fi
           echo "post_type=$POST_TYPE" >> "$GITHUB_OUTPUT"
           echo "Selected post type: $POST_TYPE"
