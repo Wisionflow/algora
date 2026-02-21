@@ -45,6 +45,13 @@ python -X utf8 -m scripts.scheduler --test    # dry-run
 - docs/ — документация проекта
 - tests/ — тесты (пока пустые)
 
+## Фото-валидация
+- 3 уровня: URL rules → HTTP check → Vision (опционально)
+- Если фото не прошло валидацию — пост публикуется без фото
+- Vision включается через IMAGE_VISION_ENABLED=true в .env
+- Стоимость vision: ~180 руб/мес при 10 проверках/день
+- Файл: src/analyze/image_validator.py
+
 ## Правила
 - НИКОГДА не выводи значения API-ключей и токенов
 - Для тестирования используй --dry-run
