@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  growth_agent:
+    build: .
+    container_name: algora_growth_agent
+    restart: unless-stopped
+    mem_limit: 512m
+    env_file:
+      - .env
+    volumes:
+      - ./sessions:/app/sessions   # persist Telethon session
+    command: >
+      sh -c "python -m scripts.setup_db && python -m scripts.run_agent"
+    networks:
+      - algora_net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  algora_net:
+    external: true   # network created by partner's infrastructure
