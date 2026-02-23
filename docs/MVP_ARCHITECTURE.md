@@ -1,24 +1,33 @@
 # Algora Audience Engine: MVP Architecture (T1 — Селлеры маркетплейсов)
 
+**Обновлено:** 2026-02-23
+**Контекст:** Синхронизация с PROJECT_MANIFESTO v2.0 — добавлены AI-агенты, PostgreSQL
+
+---
+
 ## 1. Обзор системы
+
+Система состоит из двух подсистем: **контент-пайплайн** (создаёт ценность) и **AI-агенты** (набирают и анализируют аудиторию).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ALGORA AUDIENCE ENGINE                        │
 │                                                                 │
+│  КОНТЕНТ-ПАЙПЛАЙН (SQLite, GitHub Actions):                     │
 │  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌────────┐ │
 │  │  COLLECT   │───>│  ANALYZE   │───>│  COMPOSE   │───>│ PUBLISH│ │
 │  │  (Парсеры) │    │  (ИИ-ядро) │    │ (Контент)  │    │  (TG)  │ │
 │  └───────────┘    └───────────┘    └───────────┘    └────────┘ │
-│        │                │                │               │      │
-│        v                v                v               v      │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                    STORAGE (SQLite)                       │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  AI-АГЕНТЫ (PostgreSQL, Docker, сервер партнёра):               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ GROWTH AGENT │  │MARKET ANALYST│  │ PRODUCT DISCOVERY    │  │
+│  │  (Telethon)  │  │  (будущий)   │  │    (будущий)         │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**4 модуля, работающих последовательно (pipeline):**
+### Контент-пайплайн — 4 модуля:
 
 | Модуль | Вход | Выход | Задача |
 |--------|------|-------|--------|
@@ -172,55 +181,58 @@ class AnalyzedProduct(RawProduct):
 ```
 algora/
 ├── README.md
-├── PROJECT_MANIFESTO.md
-├── SEGMENT_SCORING.md
-├── MVP_ARCHITECTURE.md
-├── pyproject.toml              # зависимости (Poetry/pip)
-├── .env.example                # шаблон переменных окружения
-├── src/
+├── CLAUDE.md                   # инструкции для Claude Code
+├── .env.example                # шаблон переменных (контент-пайплайн)
+├── docs/                       # документация
+│   ├── PROJECT_MANIFESTO.md    # главный документ проекта
+│   ├── ALGORA_PROJECT_BRIEF.md # оперативный brief
+│   ├── ALGORA_STRATEGIC_PLAN.md
+│   ├── MVP_ARCHITECTURE.md     # (этот файл)
+│   ├── CHANNEL_STRATEGY.md
+│   ├── SEGMENT_SCORING.md
+│   └── PROMOTION_RESEARCH.md
+├── src/                        # контент-пайплайн
 │   ├── __init__.py
-│   ├── config.py               # конфигурация, переменные окружения
-│   ├── models.py               # dataclasses (RawProduct, AnalyzedProduct, etc.)
-│   ├── db.py                   # SQLite: создание таблиц, CRUD
-│   ├── collect/
-│   │   ├── __init__.py
-│   │   ├── base.py             # абстрактный класс парсера
-│   │   ├── alibaba_1688.py     # парсер 1688.com
-│   │   └── wb_analytics.py     # данные о конкуренции на WB
-│   ├── analyze/
-│   │   ├── __init__.py
-│   │   ├── scoring.py          # автоматический скоринг (маржа, тренд)
-│   │   ├── enrichment.py       # обогащение данных (курс, доставка)
-│   │   └── ai_analysis.py      # Claude API для интерпретации
-│   ├── compose/
-│   │   ├── __init__.py
-│   │   └── telegram_post.py    # генерация текста поста
-│   └── publish/
-│       ├── __init__.py
-│       └── telegram_bot.py     # отправка в Telegram
+│   ├── config.py               # конфигурация
+│   ├── models.py               # dataclasses
+│   ├── db.py                   # SQLite CRUD
+│   ├── collect/                # парсинг (1688, WB)
+│   ├── analyze/                # скоринг, маржа, Claude API
+│   ├── compose/                # генерация постов
+│   └── publish/                # отправка в Telegram
+├── growth_agent/               # AI Growth Agent (отдельная подсистема)
+│   ├── src/
+│   │   ├── config.py           # конфигурация из .env
+│   │   ├── models.py           # Pydantic-модели
+│   │   ├── db.py               # asyncpg PostgreSQL CRUD
+│   │   ├── listener.py         # Telethon мониторинг чатов
+│   │   ├── brain.py            # OpenRouter LLM логика
+│   │   ├── actor.py            # отправка ответов
+│   │   └── scheduler.py        # дневные сбросы
+│   ├── scripts/
+│   │   ├── run_agent.py        # точка входа (+ --mock)
+│   │   └── setup_db.py         # создание таблиц PostgreSQL
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── requirements.txt
+│   └── .env.example
 ├── scripts/
-│   ├── run_pipeline.py         # запуск полного пайплайна
-│   └── setup_db.py             # инициализация БД
+│   ├── run_pipeline.py         # запуск контент-пайплайна
+│   └── setup_db.py             # инициализация SQLite
 ├── data/
-│   └── algora.db               # SQLite база (gitignored)
+│   └── algora.db               # SQLite (gitignored)
 └── tests/
-    └── ...
 ```
 
-## 8. Зависимости (Python)
+## 8. Зависимости контент-пайплайна (Python)
 
 ```
 # Парсинг
 httpx                  # HTTP-клиент (async)
-beautifulsoup4         # парсинг HTML
-parsel                 # CSS/XPath селекторы
-playwright             # headless browser (запасной вариант)
+apify-client           # Apify API (парсинг 1688.com)
 
 # ИИ
 anthropic              # Claude API
-
-# Перевод
-deep-translator        # бесплатный перевод (Google/DeepL)
 
 # Telegram
 python-telegram-bot    # Telegram Bot API
@@ -290,7 +302,93 @@ async def main():
 ### НЕ делаем (пока):
 - Несколько источников (Pinduoduo, Taobao) — добавим после отладки
 - Web-интерфейс или дашборд
-- Автоматический запуск по расписанию (cron)
 - Обработка изображений (скачивание, ресайз)
 - Аналитика подписчиков канала
 - Монетизация
+
+---
+
+## 12. AI-агенты (отдельная подсистема)
+
+AI-агенты работают на сервере партнёра (Hetzner) в Docker-контейнерах. Хранилище — PostgreSQL 16 (БД `algora_growth`). Общение через Telethon (userbot), LLM через OpenRouter.
+
+### 12.1 Growth Agent (ПРИОРИТЕТ №1)
+
+```
+LISTENER (Telethon) → BRAIN (LLM/OpenRouter) → ACTOR (Telethon)
+                              ↕
+                    MEMORY (PostgreSQL)
+```
+
+| Компонент | Файл | Задача |
+|-----------|------|--------|
+| **config** | `src/config.py` | Конфигурация из .env |
+| **models** | `src/models.py` | Pydantic-модели данных |
+| **db** | `src/db.py` | asyncpg CRUD для PostgreSQL |
+| **listener** | `src/listener.py` | Telethon: мониторинг чатов, фильтрация по ключевым словам |
+| **brain** | `src/brain.py` | OpenRouter: решение отвечать, генерация ответа, валидация |
+| **actor** | `src/actor.py` | Telethon: отправка с задержкой 30-120 сек, лимиты |
+| **scheduler** | `src/scheduler.py` | Сброс дневных счётчиков, расписание |
+| **run_agent** | `scripts/run_agent.py` | Точка входа (+ `--mock` для тестов) |
+| **setup_db** | `scripts/setup_db.py` | Создание 5 таблиц (chats, messages, responses, metrics, schedule) |
+
+**Инфраструктура:** Dockerfile + docker-compose.yml, 512 MB RAM, сеть `algora_net`.
+
+### 12.2 Market Analyst Agent (планируется)
+
+- Мониторинг рынка, выявление сегментов с потребностями
+- Кросс-граничные возможности (разрывы между экономиками)
+- Запуск: параллельно с Growth Agent
+
+### 12.3 Product Discovery Agent (планируется)
+
+- Мониторинг аудитории изнутри: боли, запросы, жалобы
+- Предложение AI-продуктов для монетизации (Уровень 1)
+- Запуск: после набора 200-500 подписчиков
+
+---
+
+## 13. Зависимости Growth Agent
+
+```
+# Telegram
+telethon              # Userbot API
+
+# LLM
+httpx                 # HTTP-клиент для OpenRouter
+
+# База данных
+asyncpg               # PostgreSQL async driver
+
+# Утилиты
+pydantic              # валидация данных
+loguru                # логирование
+python-dotenv         # переменные окружения
+```
+
+### Переменные окружения Growth Agent (.env)
+
+```
+# Telegram (userbot)
+TG_API_ID=...
+TG_API_HASH=...
+TG_PHONE=...
+
+# OpenRouter (LLM)
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+
+# PostgreSQL
+DB_HOST=algora_postgres
+DB_PORT=5432
+DB_NAME=algora_growth
+DB_USER=algora
+DB_PASSWORD=...
+
+# Поведение
+CHANNEL_USERNAME=@algora_trends
+MAX_RESPONSES_PER_DAY=10
+MAX_RESPONSES_PER_CHAT=3
+MIN_DELAY_SECONDS=30
+MAX_DELAY_SECONDS=120
+```
