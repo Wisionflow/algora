@@ -433,7 +433,8 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
         "",
     ]
 
-    for i, p in enumerate(products[:5], 1):
+    shown = products[:5]
+    for i, p in enumerate(shown, 1):
         title = _smart_truncate(_deduplicate_title(p.raw.title_ru or p.raw.title_cn), 40)
         cat_name = CATEGORY_NAMES.get(p.raw.category, "Разное")
         margin_icon = _margin_emoji(p.margin_pct)
@@ -445,7 +446,11 @@ def compose_weekly_top(products: list[AnalyzedProduct]) -> str:
         )
         lines.append("")
 
-    lines.append("Подробный расчёт по каждому — в постах выше")
+    count = len(shown)
+    if count == 1:
+        lines.append("Подробный разбор — в посте выше")
+    else:
+        lines.append(f"Подробный разбор каждого — в {count} постах выше")
     lines.append("")
     lines.append("#топнедели #китай #1688 #wb #ozon #algora")
 

@@ -2,7 +2,10 @@ name: Algora Autopost
 
 on:
   schedule:
-    # Once daily: 16:00 UTC = 19:00 MSK — optimal time for marketplace sellers
+    # Twice daily during channel growth sprint (Feb-Mar 2026)
+    # Morning: 10:00 UTC = 13:00 MSK — product card
+    - cron: "0 10 * * *"
+    # Evening: 16:00 UTC = 19:00 MSK — product or themed post
     - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
@@ -79,17 +82,23 @@ jobs:
         run: |
           POST_TYPE="${{ github.event.inputs.post_type || 'auto' }}"
           if [ "$POST_TYPE" = "auto" ]; then
-            # Auto-select based on day of week (1 post/day at 19:00 MSK)
             DOW=$(date -u +%u)  # 1=Mon, 7=Sun
-            case "$DOW" in
-              1) POST_TYPE="product" ;;           # Mon — product
-              2) POST_TYPE="niche_review" ;;      # Tue — niche review
-              3) POST_TYPE="product" ;;           # Wed — product
-              4) POST_TYPE="beginner_mistake" ;;  # Thu — beginner mistake
-              5) POST_TYPE="product" ;;           # Fri — product
-              6) POST_TYPE="product_of_week" ;;   # Sat — product of week
-              7) POST_TYPE="weekly_top" ;;        # Sun — weekly top
-            esac
+            HOUR=$(date -u +%H)  # UTC hour
+            if [ "$HOUR" -lt 13 ]; then
+              # Morning run (10:00 UTC) — always product card
+              POST_TYPE="product"
+            else
+              # Evening run (16:00 UTC) — themed post by day of week
+              case "$DOW" in
+                1) POST_TYPE="product" ;;           # Mon — product
+                2) POST_TYPE="niche_review" ;;      # Tue — niche review
+                3) POST_TYPE="product" ;;           # Wed — product
+                4) POST_TYPE="beginner_mistake" ;;  # Thu — beginner mistake
+                5) POST_TYPE="product" ;;           # Fri — product
+                6) POST_TYPE="product_of_week" ;;   # Sat — product of week
+                7) POST_TYPE="weekly_top" ;;        # Sun — weekly top
+              esac
+            fi
           fi
           echo "post_type=$POST_TYPE" >> "$GITHUB_OUTPUT"
           echo "Selected post type: $POST_TYPE"
