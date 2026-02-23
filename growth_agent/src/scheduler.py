@@ -5,7 +5,7 @@
 """
 
 import asyncio
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 
 from loguru import logger
 
@@ -14,10 +14,9 @@ from . import db
 
 async def _wait_until(target: time) -> None:
     """Sleep until next occurrence of target UTC time."""
-    now = datetime.utcnow()
-    target_dt = datetime.combine(now.date(), target)
+    now = datetime.now(timezone.utc)
+    target_dt = datetime.combine(now.date(), target, tzinfo=timezone.utc)
     if target_dt <= now:
-        from datetime import timedelta
         target_dt += timedelta(days=1)
     wait_sec = (target_dt - now).total_seconds()
     logger.info("Scheduler: next reset at {} UTC ({:.0f}s)", target_dt, wait_sec)

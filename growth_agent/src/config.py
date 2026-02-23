@@ -17,10 +17,11 @@ TG_SESSION_NAME: str = os.getenv("TG_SESSION_NAME", "growth_agent")
 AGENT_NAME: str = os.getenv("AGENT_NAME", "Алгора")
 CHANNEL_LINK: str = os.getenv("CHANNEL_LINK", "@algora_trends")
 
-# --- OpenRouter (LLM) ---
-OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
-OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+# --- NATS (AI Proxy) ---
+NATS_URL: str = os.getenv("NATS_URL", "nats://nats:4222")
+
+# --- LLM model (via NATS AI Proxy) ---
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
 
 # --- PostgreSQL ---
 POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")

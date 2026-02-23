@@ -29,14 +29,15 @@ async def on_message(message: Message, actor) -> None:
 
 
 async def run_mock() -> None:
-    """Smoke-test without DB or Telegram. Tests config + relevance + LLM."""
-    logger.info("=== MOCK MODE (no DB, no Telegram) ===")
+    """Smoke-test without DB, Telegram, or NATS. Tests config + relevance."""
+    logger.info("=== MOCK MODE (no DB, no Telegram, no NATS) ===")
 
     # Test 1: Config
     logger.info("Config check:")
     logger.info("  TG_API_ID: {}", config.TG_API_ID)
     logger.info("  TG_API_HASH: {}...", config.TG_API_HASH[:8] if config.TG_API_HASH else "NOT SET")
     logger.info("  TG_PHONE: {}", config.TG_PHONE)
+    logger.info("  NATS_URL: {}", config.NATS_URL)
     logger.info("  OPENROUTER_MODEL: {}", config.OPENROUTER_MODEL)
     logger.info("  CHANNEL_LINK: {}", config.CHANNEL_LINK)
     logger.info("  RELEVANCE_KEYWORDS: {} keywords", len(config.RELEVANCE_KEYWORDS))
@@ -66,35 +67,52 @@ async def run_mock() -> None:
         logger.info("  [{}] score={:.2f} relevant={} | {}", "OK" if ok else "FAIL", score, is_relevant, text[:60])
     logger.info("  -> Relevance {}", "OK" if all_ok else "HAS FAILURES")
 
-    # Test 3: LLM (only if real API key)
-    if config.OPENROUTER_API_KEY and "PLACEHOLDER" not in config.OPENROUTER_API_KEY:
-        import json
-        from src.brain import _call_openrouter, SYSTEM_PROMPT, DECISION_PROMPT
-
-        logger.info("\nLLM test (OpenRouter):")
-        prompt_text = DECISION_PROMPT.format(text="Какая маржа сейчас на чехлах для телефонов на WB?")
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt_text},
-        ]
+    # Test 3: NATS + LLM (only if NATS_URL is not default placeholder)
+    if config.NATS_URL and "nats:" in config.NATS_URL:
         try:
-            raw, cost = await _call_openrouter(messages)
-            clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            data = json.loads(clean)
-            logger.info("  LLM response: {}", json.dumps(data, ensure_ascii=False, indent=2))
-            logger.info("  Cost: ${:.6f}", cost)
-            logger.info("  -> LLM OK")
+            import nats as nats_lib
+            logger.info("\nNATS connection test:")
+            nc = await nats_lib.connect(
+                config.NATS_URL,
+                max_reconnect_attempts=1,
+                reconnect_time_wait=1,
+            )
+            logger.info("  NATS connected: {}", nc.is_connected)
+
+            # Test LLM via NATS
+            import json
+            from src.brain import init_nats, _call_llm, SYSTEM_PROMPT, DECISION_PROMPT
+            init_nats(nc)
+
+            prompt_text = DECISION_PROMPT.format(text="Какая маржа сейчас на чехлах для телефонов на WB?")
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt_text},
+            ]
+            try:
+                raw = await _call_llm(messages)
+                clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                data = json.loads(clean)
+                logger.info("  LLM response: {}", json.dumps(data, ensure_ascii=False, indent=2))
+                logger.info("  -> LLM OK")
+            except asyncio.TimeoutError:
+                logger.warning("  LLM call timed out (NATS AI Proxy may not be reachable)")
+            except Exception as e:
+                logger.error("  LLM call failed: {}", e)
+
+            await nc.drain()
         except Exception as e:
-            logger.error("  LLM call failed: {}", e)
+            logger.warning("\nNATS test: SKIPPED (cannot connect: {})", e)
     else:
-        logger.info("\nLLM test: SKIPPED (API key is placeholder)")
+        logger.info("\nNATS test: SKIPPED (NATS_URL not configured)")
 
     logger.info("\n=== Mock run complete ===")
 
 
 async def run_live() -> None:
-    """Full live run with Telethon."""
-    from src import db
+    """Full live run with Telethon + NATS + PostgreSQL."""
+    import nats as nats_lib
+    from src import db, brain
     from src.listener import Listener
     from src.actor import Actor
     from src.scheduler import run_daily_tasks
@@ -108,8 +126,19 @@ async def run_live() -> None:
         logger.error("POSTGRES_DSN not set in .env")
         sys.exit(1)
 
+    # Initialize DB
     await db.init_pool(config.POSTGRES_DSN)
 
+    # Initialize NATS
+    nc = await nats_lib.connect(
+        config.NATS_URL,
+        max_reconnect_attempts=-1,
+        reconnect_time_wait=2,
+    )
+    brain.init_nats(nc)
+    logger.info("NATS connected to {}", config.NATS_URL)
+
+    # Initialize Telethon
     from telethon import TelegramClient
     client = TelegramClient(config.TG_SESSION_NAME, config.TG_API_ID, config.TG_API_HASH)
 
@@ -132,6 +161,7 @@ async def run_live() -> None:
         logger.info("Shutting down...")
     finally:
         await listener.stop()
+        await nc.drain()
         await db.close_pool()
 
 

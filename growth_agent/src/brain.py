@@ -1,4 +1,4 @@
-"""Brain — LLM decision engine (OpenRouter).
+"""Brain — LLM decision engine (via NATS AI Proxy).
 
 For each relevant message decides:
   1. Should we respond? (yes/no + reason)
@@ -7,13 +7,24 @@ For each relevant message decides:
 """
 
 import json
+import uuid
+import asyncio
 from typing import Optional
 
-import httpx
 from loguru import logger
 
 from . import config, db
 from .models import Message, BrainDecision
+
+# Global NATS connection (initialized by run_agent.py)
+_nc = None
+
+
+def init_nats(nc) -> None:
+    """Set the NATS connection for LLM calls."""
+    global _nc
+    _nc = nc
+
 
 SYSTEM_PROMPT = f"""Ты эксперт по импорту товаров из Китая для продажи на российских маркетплейсах (Wildberries, Ozon).
 Тебя зовут {config.AGENT_NAME}. Ты участник чата.
@@ -47,35 +58,43 @@ DECISION_PROMPT = """Ты получил сообщение из Telegram-чат
 - Уже есть хороший ответ в чате"""
 
 
-async def _call_openrouter(messages: list[dict]) -> tuple[str, float]:
-    """Call OpenRouter API. Returns (response_text, cost_usd)."""
-    headers = {
-        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": config.OPENROUTER_MODEL,
-        "messages": messages,
-        "max_tokens": 300,
-        "temperature": 0.7,
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{config.OPENROUTER_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
+async def _call_llm(messages: list[dict]) -> str:
+    """Call LLM via NATS AI Proxy. Returns response text."""
+    if _nc is None:
+        raise RuntimeError("NATS not initialized. Call brain.init_nats(nc) first.")
+
+    request_id = str(uuid.uuid4())
+    inbox = f"algora.ai.response.{request_id}"
+
+    # Subscribe to response inbox before publishing
+    future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+
+    async def on_response(msg):
+        if not future.done():
+            future.set_result(json.loads(msg.data))
+
+    sub = await _nc.subscribe(inbox, cb=on_response)
+
+    try:
+        # Publish request
+        request = {
+            "request_id": request_id,
+            "model": config.OPENROUTER_MODEL,
+            "messages": messages,
+            "max_tokens": 300,
+            "temperature": 0.7,
+            "response_subject": inbox,
+        }
+        await _nc.publish(
+            "algora.ai.request",
+            json.dumps(request, ensure_ascii=False).encode(),
         )
-        resp.raise_for_status()
-        data = resp.json()
 
-    text = data["choices"][0]["message"]["content"].strip()
-
-    # Rough cost estimate from usage tokens (OpenRouter prices vary by model)
-    usage = data.get("usage", {})
-    total_tokens = usage.get("total_tokens", 0)
-    cost = total_tokens * 0.000003  # ~$3 per 1M tokens (Sonnet estimate)
-
-    return text, cost
+        # Wait for response with timeout
+        result = await asyncio.wait_for(future, timeout=30)
+        return result["content"]
+    finally:
+        await sub.unsubscribe()
 
 
 async def _should_include_link(chat_id: int) -> bool:
@@ -88,9 +107,9 @@ async def _should_include_link(chat_id: int) -> bool:
 
 async def think(message: Message) -> BrainDecision:
     """Main decision function. Returns BrainDecision."""
-    if not config.OPENROUTER_API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set — skipping Brain")
-        return BrainDecision(should_respond=False, reason="no_api_key")
+    if _nc is None:
+        logger.warning("NATS not connected — skipping Brain")
+        return BrainDecision(should_respond=False, reason="no_nats")
 
     prompt_text = DECISION_PROMPT.format(text=message.text)
 
@@ -100,14 +119,13 @@ async def think(message: Message) -> BrainDecision:
     ]
 
     try:
-        raw, cost = await _call_openrouter(messages)
+        raw = await _call_llm(messages)
     except Exception as e:
-        logger.error("OpenRouter call failed: {}", e)
+        logger.error("LLM call failed: {}", e)
         return BrainDecision(should_respond=False, reason=f"llm_error:{e}")
 
     # Parse JSON response
     try:
-        # Strip markdown code fences if model wraps in ```json
         clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         data = json.loads(clean)
     except json.JSONDecodeError:
@@ -123,7 +141,6 @@ async def think(message: Message) -> BrainDecision:
             should_respond=False,
             reason=reason,
             llm_model=config.OPENROUTER_MODEL,
-            llm_cost=cost,
         )
 
     # Decide whether to append channel link
@@ -142,5 +159,4 @@ async def think(message: Message) -> BrainDecision:
         response_text=response_text,
         include_channel_link=include_link,
         llm_model=config.OPENROUTER_MODEL,
-        llm_cost=cost,
     )

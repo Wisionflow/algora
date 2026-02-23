@@ -4,7 +4,7 @@ Monitors chats from DB, filters relevant messages, saves to messages table.
 Brain is called asynchronously for relevant messages.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
 from loguru import logger
@@ -85,7 +85,7 @@ class Listener:
                 text=text,
                 is_relevant=is_relevant,
                 relevance_score=score,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             )
 
             saved_id = await db.save_message(message)

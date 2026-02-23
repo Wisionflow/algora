@@ -2,7 +2,7 @@
 
 import asyncio
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 from telethon import TelegramClient
@@ -67,7 +67,7 @@ class Actor:
             included_channel_link=decision.include_channel_link,
             llm_model=decision.llm_model,
             llm_cost=decision.llm_cost,
-            sent_at=datetime.utcnow(),
+            sent_at=datetime.now(timezone.utc),
             reaction="unknown",
         )
         await db.save_response(resp)

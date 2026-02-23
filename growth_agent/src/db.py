@@ -3,7 +3,7 @@
 Uses asyncpg for async access. Connection pool is initialized once on startup.
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 import asyncpg
@@ -51,7 +51,7 @@ async def upsert_chat(chat: Chat) -> int:
     """,
         chat.telegram_id, chat.title, chat.topic, chat.member_count,
         chat.rules_summary, chat.our_status,
-        chat.joined_at or datetime.utcnow(), chat.last_activity
+        chat.joined_at or datetime.now(timezone.utc), chat.last_activity
     )
     return row["id"]
 
@@ -84,7 +84,7 @@ async def save_message(msg: Message) -> int:
         RETURNING id
     """,
         msg.chat_id, msg.telegram_message_id, msg.sender_name, msg.text,
-        msg.is_relevant, msg.relevance_score, msg.created_at or datetime.utcnow()
+        msg.is_relevant, msg.relevance_score, msg.created_at or datetime.now(timezone.utc)
     )
     return row["id"] if row else 0
 
@@ -107,7 +107,7 @@ async def save_response(resp: Response) -> int:
         RETURNING id
     """,
         resp.message_id, resp.chat_id, resp.response_text, resp.included_channel_link,
-        resp.llm_model, resp.llm_cost, resp.sent_at or datetime.utcnow(), resp.reaction
+        resp.llm_model, resp.llm_cost, resp.sent_at or datetime.now(timezone.utc), resp.reaction
     )
     return row["id"]
 
@@ -204,7 +204,7 @@ async def is_chat_allowed(chat_id: int) -> bool:
     sched = await get_or_create_schedule(chat_id)
     if not sched["is_active"]:
         return False
-    if sched["cooldown_until"] and sched["cooldown_until"] > datetime.utcnow():
+    if sched["cooldown_until"] and sched["cooldown_until"] > datetime.now(timezone.utc):
         return False
     if sched["messages_today"] >= sched["max_messages_per_day"]:
         return False
