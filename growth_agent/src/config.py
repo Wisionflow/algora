@@ -14,7 +14,7 @@ TG_PHONE: str = os.getenv("TG_PHONE", "")           # +7XXXXXXXXXX
 TG_SESSION_NAME: str = os.getenv("TG_SESSION_NAME", "growth_agent")
 
 # --- Agent identity ---
-AGENT_NAME: str = os.getenv("AGENT_NAME", "Алгора")
+AGENT_NAME: str = os.getenv("AGENT_NAME", "Максим")
 CHANNEL_LINK: str = os.getenv("CHANNEL_LINK", "@algora_trends")
 
 # --- NATS (AI Proxy) ---
