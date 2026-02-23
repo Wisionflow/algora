@@ -2,8 +2,12 @@
 
 Monitors chats from DB, filters relevant messages, saves to messages table.
 Brain is called asynchronously for relevant messages.
+
+Chat list is refreshed from DB every CHAT_REFRESH_INTERVAL seconds so that
+newly joined chats (via sync_chats.py) are picked up without restart.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
@@ -15,6 +19,8 @@ from . import config
 from . import db
 from .models import Message
 from .relevance import compute_relevance as _compute_relevance
+
+CHAT_REFRESH_INTERVAL = 300  # seconds (5 min)
 
 
 class Listener:
@@ -29,6 +35,8 @@ class Listener:
         self._callback = on_relevant_message
         self._client: TelegramClient | None = None
         self._chat_ids: set[int] = set()  # telegram_id of monitored chats
+        self._chat_map: dict[int, int] = {}  # telegram_id -> internal DB id
+        self._refresh_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Authenticate and connect Telethon client."""
@@ -42,12 +50,23 @@ class Listener:
 
         await self._refresh_chat_list()
         self._register_handlers()
+        self._refresh_task = asyncio.create_task(self._periodic_refresh())
 
     async def _refresh_chat_list(self) -> None:
         """Reload active chats from DB."""
         chats = await db.get_active_chats()
         self._chat_ids = {c["telegram_id"] for c in chats}
+        self._chat_map = {c["telegram_id"]: c["id"] for c in chats}
         logger.info("Monitoring {} chats", len(self._chat_ids))
+
+    async def _periodic_refresh(self) -> None:
+        """Refresh chat list every CHAT_REFRESH_INTERVAL seconds."""
+        while True:
+            await asyncio.sleep(CHAT_REFRESH_INTERVAL)
+            try:
+                await self._refresh_chat_list()
+            except Exception as e:
+                logger.warning("Chat list refresh failed: {}", e)
 
     def _register_handlers(self) -> None:
         assert self._client is not None
@@ -68,10 +87,7 @@ class Listener:
             score = _compute_relevance(text)
             is_relevant = score >= config.MIN_RELEVANCE_SCORE
 
-            # Get internal chat_id from DB
-            chats = await db.get_active_chats()
-            chat_map = {c["telegram_id"]: c["id"] for c in chats}
-            internal_chat_id = chat_map.get(chat_id_tg)
+            internal_chat_id = self._chat_map.get(chat_id_tg)
             if not internal_chat_id:
                 return
 
@@ -106,6 +122,8 @@ class Listener:
         await self._client.run_until_disconnected()
 
     async def stop(self) -> None:
+        if self._refresh_task:
+            self._refresh_task.cancel()
         if self._client:
             await self._client.disconnect()
             logger.info("Telethon client disconnected")
