@@ -67,7 +67,7 @@ async def _call_llm(messages: list[dict]) -> str:
     inbox = f"algora.ai.response.{request_id}"
 
     # Subscribe to response inbox before publishing
-    future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+    future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
 
     async def on_response(msg):
         if not future.done():
