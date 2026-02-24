@@ -51,6 +51,7 @@ from src.db import (
     is_already_published,
     is_image_already_published,
     is_product_recently_published,
+    _title_similarity,
 )
 from src.models import AnalyzedProduct
 
@@ -227,10 +228,26 @@ async def run(
     # Two-tier logic: when premium enabled, top products go to premium channel
     premium_count = 2  # top N go to premium
     published_count = 0
+    published_titles_this_run: list[str] = []  # Track titles within this run
     for idx, product in enumerate(top, 1):
-        # Skip recently published products (cross-platform dedup by offer_id)
-        if is_product_recently_published(product.raw.source_url, days=14):
-            logger.info("Skipping recently published: {}", product.raw.title_ru[:40])
+        # Skip recently published products (cross-platform dedup by offer_id + title)
+        if is_product_recently_published(
+            product.raw.source_url, days=14, title_ru=product.raw.title_ru
+        ):
+            logger.info("Skipping recently published (dedup): {}", product.raw.title_ru[:40])
+            continue
+
+        # Within-batch dedup: skip if similar to another product already published in THIS run
+        is_batch_dup = False
+        for prev_title in published_titles_this_run:
+            if _title_similarity(product.raw.title_ru, prev_title) >= 0.4:
+                logger.info(
+                    "Skipping batch duplicate: '{}' ~ '{}'",
+                    product.raw.title_ru[:35], prev_title[:35],
+                )
+                is_batch_dup = True
+                break
+        if is_batch_dup:
             continue
 
         logger.info("--- Post {}/{}: AI INSIGHT ---", idx, len(top))
@@ -299,6 +316,7 @@ async def run(
                     total_score=product.total_score,
                 )
                 published_count += 1
+                published_titles_this_run.append(product.raw.title_ru)
                 logger.info("Post {} published to Telegram ({})!", idx, channel_label)
             else:
                 logger.error("Post {} failed to publish to Telegram", idx)
@@ -317,6 +335,7 @@ async def run(
                         product.raw.source_url, vk_text, vk_result["post_id"],
                         post_type="product", category=product.raw.category,
                         image_url=product.raw.image_url,
+                        title_ru=product.raw.title_ru,
                     )
                     logger.info("Post {} published to VK!", idx)
                 else:

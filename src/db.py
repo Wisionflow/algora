@@ -1,6 +1,7 @@
 """SQLite database for Algora — stores products and published posts."""
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 
@@ -140,6 +141,14 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: add 'title_ru' column to published_posts (for title-based dedup)
+    try:
+        conn.execute("ALTER TABLE published_posts ADD COLUMN title_ru TEXT")
+        conn.commit()
+        logger.debug("Migrated published_posts: added title_ru column")
+    except sqlite3.OperationalError:
+        pass
+
     # Migrate: add enrichment fields to analyzed_products (keywords, trends, competitive)
     try:
         conn.execute("ALTER TABLE analyzed_products ADD COLUMN keywords_extracted TEXT")
@@ -262,10 +271,11 @@ def save_published_post(
 ) -> None:
     conn = get_connection()
     try:
+        title_ru = post.product.raw.title_ru if post.product else ""
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url, title_ru)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 post.product.raw.source_url,
                 post.text,
@@ -275,6 +285,7 @@ def save_published_post(
                 post_type or "product",
                 category or "all",
                 image_url,
+                title_ru,
             ),
         )
         conn.commit()
@@ -289,14 +300,15 @@ def save_published_vk_post(
     post_type: str = "product",
     category: str = "",
     image_url: str = "",
+    title_ru: str = "",
 ) -> None:
     """Save a VK wall post to the published_posts table."""
     conn = get_connection()
     try:
         conn.execute(
             """INSERT OR IGNORE INTO published_posts
-            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (source_url, post_text, message_id, platform, published_at, post_type, category, image_url, title_ru)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 source_url,
                 text,
@@ -306,6 +318,7 @@ def save_published_vk_post(
                 post_type or "product",
                 category or "all",
                 image_url,
+                title_ru,
             ),
         )
         conn.commit()
@@ -332,11 +345,12 @@ def is_image_already_published(image_url: str) -> bool:
 
 
 def is_already_published(source_url: str, platform: str = "telegram") -> bool:
+    """Check if source_url was ever published on ANY platform (not just the given one)."""
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT 1 FROM published_posts WHERE source_url = ? AND platform = ?",
-            (source_url, platform),
+            "SELECT 1 FROM published_posts WHERE source_url = ?",
+            (source_url,),
         ).fetchone()
         return row is not None
     finally:
@@ -345,7 +359,6 @@ def is_already_published(source_url: str, platform: str = "telegram") -> bool:
 
 def _extract_offer_id(url: str) -> str:
     """Extract offer ID from 1688.com or alibaba.com product URL."""
-    import re
     # 1688: offerId=588538855156
     m = re.search(r"offerId=(\d+)", url)
     if m:
@@ -357,11 +370,51 @@ def _extract_offer_id(url: str) -> str:
     return ""
 
 
-def is_product_recently_published(source_url: str, days: int = 14) -> bool:
+def _normalize_title(title: str) -> set[str]:
+    """Normalize title to a set of meaningful words for fuzzy comparison.
+
+    Strips punctuation, lowercases, removes short/common words.
+    Returns a set of remaining words.
+    """
+    if not title:
+        return set()
+    cleaned = re.sub(r"[,.()\[\]{}\"/\\!?;:—–\-+&|#@*~`'«»\"\"]+", " ", title.lower())
+    # Remove digits and very short words
+    words = {w for w in cleaned.split() if len(w) > 2 and not w.isdigit()}
+    # Remove common Russian stopwords
+    _stop = {"для", "это", "как", "что", "где", "или", "его", "при", "все",
+             "без", "над", "под", "тот", "эта", "эти", "они", "она", "оно",
+             "вам", "нас", "вас", "мне", "тебя", "ваш", "наш", "свой",
+             "будет", "быть", "был", "была", "были", "есть", "нет",
+             "можно", "нужно", "только", "также", "через", "после"}
+    words -= _stop
+    return words
+
+
+def _title_similarity(title_a: str, title_b: str) -> float:
+    """Compute Jaccard similarity between two titles (0.0 to 1.0).
+
+    Returns the ratio of shared meaningful words to total unique words.
+    Similarity >= 0.5 means the titles are about the same product.
+    """
+    words_a = _normalize_title(title_a)
+    words_b = _normalize_title(title_b)
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union) if union else 0.0
+
+
+def is_product_recently_published(
+    source_url: str, days: int = 14, title_ru: str = ""
+) -> bool:
     """Check if product with this source_url was published recently on ANY platform.
 
-    Also checks by offer_id extracted from URL to catch duplicates with
-    different URL parameters (e.g. different uuid in 1688.com links).
+    Uses 3 layers of deduplication:
+    1. Exact URL match (any platform, within `days`)
+    2. Offer ID extraction — catches same product with different URL params
+    3. Title similarity (Jaccard >= 0.5) — catches same product from different sellers
     """
     conn = get_connection()
     try:
@@ -370,7 +423,7 @@ def is_product_recently_published(source_url: str, days: int = 14) -> bool:
             - __import__("datetime").timedelta(days=days)
         ).isoformat()
 
-        # Check exact URL match (any platform)
+        # Layer 1: Check exact URL match (any platform)
         row = conn.execute(
             "SELECT 1 FROM published_posts WHERE source_url = ? AND published_at > ?",
             (source_url, cutoff),
@@ -378,15 +431,27 @@ def is_product_recently_published(source_url: str, days: int = 14) -> bool:
         if row:
             return True
 
-        # Check by offer_id
+        # Layer 2: Check by offer_id
         offer_id = _extract_offer_id(source_url)
+        recent_posts = conn.execute(
+            "SELECT source_url, title_ru FROM published_posts WHERE published_at > ?",
+            (cutoff,),
+        ).fetchall()
+
         if offer_id:
-            rows = conn.execute(
-                "SELECT source_url FROM published_posts WHERE published_at > ?",
-                (cutoff,),
-            ).fetchall()
-            for r in rows:
+            for r in recent_posts:
                 if _extract_offer_id(r["source_url"]) == offer_id:
+                    return True
+
+        # Layer 3: Check by title similarity (catches same product from different sellers)
+        if title_ru:
+            for r in recent_posts:
+                existing_title = r["title_ru"] or ""
+                if existing_title and _title_similarity(title_ru, existing_title) >= 0.5:
+                    logger.info(
+                        "Title similarity dedup: '{}' ~ '{}' (>=0.5)",
+                        title_ru[:40], existing_title[:40],
+                    )
                     return True
 
         return False
