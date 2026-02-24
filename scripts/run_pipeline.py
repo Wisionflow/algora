@@ -87,9 +87,12 @@ async def run(
     dry_run: bool = False,
     source: str = "demo",
     top_n: int = 3,
+    max_publish: int = 0,
 ) -> None:
     logger.info("=== ALGORA Pipeline START ===")
     logger.info("Source: {}, Category: {}, Dry run: {}", source, category, dry_run)
+    if max_publish > 0:
+        logger.info("Max publish per run: {}", max_publish)
     logger.info("CNY/RUB rate: {:.2f} (CBR)", get_cny_to_rub())
 
     # Init DB
@@ -250,6 +253,11 @@ async def run(
         if is_batch_dup:
             continue
 
+        # Max publish limit — stop early to save AI calls and avoid flooding
+        if max_publish > 0 and published_count >= max_publish:
+            logger.info("Reached max_publish limit ({}), stopping", max_publish)
+            break
+
         logger.info("--- Post {}/{}: AI INSIGHT ---", idx, len(top))
         product.ai_insight = await generate_insight(product)
         save_analyzed_product(product)
@@ -387,7 +395,13 @@ def main() -> None:
         "--top",
         type=int,
         default=3,
-        help="Number of top products to publish (default: 3)",
+        help="Number of top candidates to consider (default: 3)",
+    )
+    parser.add_argument(
+        "--max-publish",
+        type=int,
+        default=0,
+        help="Max posts to publish per run (0 = no limit, default: 0)",
     )
     args = parser.parse_args()
 
@@ -396,6 +410,7 @@ def main() -> None:
         dry_run=args.dry_run,
         source=args.source,
         top_n=args.top,
+        max_publish=args.max_publish,
     ))
 
 

@@ -34,6 +34,10 @@ VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # Known CDN hosts that may serve images without file extensions
 _CDN_HOSTS = ["cbu01.alicdn.com", "img.alicdn.com", "cbu-cdn"]
 
+# Trusted CDN hosts — skip L2 HTTP check (their rate limits block HEAD requests,
+# but Telegram API can still fetch these images from its own servers)
+_TRUSTED_CDN_HOSTS = ["cbu01.alicdn.com", "img.alicdn.com", "cbu-cdn"]
+
 
 def validate_url_rules(image_url: str) -> tuple[bool, str]:
     """Level 1: fast URL check without downloading.
@@ -180,10 +184,16 @@ async def validate_product_image(
         return False, reason
 
     # Level 2: Downloadable check (free, 1 HTTP request)
-    valid, reason = await validate_image_downloadable(image_url)
-    if not valid:
-        logger.info("Image rejected (L2 HTTP): {} | {}", reason, image_url[:80])
-        return False, reason
+    # Skip for trusted CDNs — their rate limits block our HEAD requests,
+    # but Telegram API can still fetch images from its own servers
+    is_trusted_cdn = any(cdn in image_url.lower() for cdn in _TRUSTED_CDN_HOSTS)
+    if is_trusted_cdn:
+        logger.debug("Skipping L2 check for trusted CDN: {}", image_url[:80])
+    else:
+        valid, reason = await validate_image_downloadable(image_url)
+        if not valid:
+            logger.info("Image rejected (L2 HTTP): {} | {}", reason, image_url[:80])
+            return False, reason
 
     # Level 3: Vision (paid, optional)
     if use_vision and anthropic_client:
