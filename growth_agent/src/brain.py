@@ -59,42 +59,31 @@ DECISION_PROMPT = """Ты получил сообщение из Telegram-чат
 
 
 async def _call_llm(messages: list[dict]) -> str:
-    """Call LLM via NATS AI Proxy. Returns response text."""
+    """Call LLM via NATS AI Proxy using request-reply pattern."""
     if _nc is None:
         raise RuntimeError("NATS not initialized. Call brain.init_nats(nc) first.")
 
     request_id = str(uuid.uuid4())
-    inbox = f"algora.ai.response.{request_id}"
+    request = {
+        "request_id": request_id,
+        "agent": "cmo_growth",
+        "model": config.OPENROUTER_MODEL,
+        "messages": messages,
+        "max_tokens": 300,
+        "temperature": 0.7,
+    }
+    payload = json.dumps(request, ensure_ascii=False).encode()
+    logger.debug("LLM request sending: id={}", request_id)
 
-    # Subscribe to response inbox before publishing
-    future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+    # Use NATS request-reply (AI Proxy uses msg.respond())
+    response = await _nc.request("algora.ai.request", payload, timeout=30)
+    data = json.loads(response.data)
+    logger.debug("LLM response received: id={} success={}", request_id, data.get("success"))
 
-    async def on_response(msg):
-        if not future.done():
-            future.set_result(json.loads(msg.data))
+    if not data.get("success"):
+        raise RuntimeError(f"AI Proxy error: {data.get('error')} - {data.get('message')}")
 
-    sub = await _nc.subscribe(inbox, cb=on_response)
-
-    try:
-        # Publish request
-        request = {
-            "request_id": request_id,
-            "model": config.OPENROUTER_MODEL,
-            "messages": messages,
-            "max_tokens": 300,
-            "temperature": 0.7,
-            "response_subject": inbox,
-        }
-        await _nc.publish(
-            "algora.ai.request",
-            json.dumps(request, ensure_ascii=False).encode(),
-        )
-
-        # Wait for response with timeout
-        result = await asyncio.wait_for(future, timeout=30)
-        return result["content"]
-    finally:
-        await sub.unsubscribe()
+    return data["content"]
 
 
 async def _should_include_link(chat_id: int) -> bool:
@@ -120,9 +109,12 @@ async def think(message: Message) -> BrainDecision:
 
     try:
         raw = await _call_llm(messages)
+    except asyncio.TimeoutError:
+        logger.error("LLM call timed out after 30s (no response from AI Proxy)")
+        return BrainDecision(should_respond=False, reason="llm_timeout")
     except Exception as e:
-        logger.error("LLM call failed: {}", e)
-        return BrainDecision(should_respond=False, reason=f"llm_error:{e}")
+        logger.error("LLM call failed: {} ({})", e, type(e).__name__)
+        return BrainDecision(should_respond=False, reason=f"llm_error:{type(e).__name__}:{e}")
 
     # Parse JSON response
     try:
