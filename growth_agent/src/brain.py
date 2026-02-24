@@ -109,12 +109,13 @@ async def think(message: Message) -> BrainDecision:
 
     try:
         raw = await _call_llm(messages)
-    except asyncio.TimeoutError:
-        logger.error("LLM call timed out after 30s (no response from AI Proxy)")
-        return BrainDecision(should_respond=False, reason="llm_timeout")
     except Exception as e:
-        logger.error("LLM call failed: {} ({})", e, type(e).__name__)
-        return BrainDecision(should_respond=False, reason=f"llm_error:{type(e).__name__}:{e}")
+        ename = type(e).__name__
+        if "timeout" in ename.lower() or isinstance(e, asyncio.TimeoutError):
+            logger.error("LLM call timed out after 30s (no response from AI Proxy): {}", ename)
+            return BrainDecision(should_respond=False, reason="llm_timeout")
+        logger.error("LLM call failed: {} ({})", e, ename)
+        return BrainDecision(should_respond=False, reason=f"llm_error:{ename}:{e}")
 
     # Parse JSON response
     try:

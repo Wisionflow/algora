@@ -138,17 +138,17 @@ async def run_live() -> None:
     brain.init_nats(nc)
     logger.info("NATS connected to {}", config.NATS_URL)
 
-    # Initialize Telethon
-    from telethon import TelegramClient
-    client = TelegramClient(config.TG_SESSION_NAME, config.TG_API_ID, config.TG_API_HASH)
+    # Initialize Listener (creates and connects Telethon client)
+    listener = Listener(on_relevant_message=lambda msg: None)  # temp callback
+    await listener.start()
 
-    actor = Actor(client)
+    # Actor uses Listener's connected Telethon client
+    actor = Actor(listener._client)
 
     async def message_handler(message: Message) -> None:
         await on_message(message, actor)
 
-    listener = Listener(on_relevant_message=message_handler)
-    await listener.start()
+    listener._callback = message_handler
 
     logger.info("Growth Agent started. Monitoring chats...")
 
