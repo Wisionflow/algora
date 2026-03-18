@@ -40,6 +40,15 @@ class Actor:
         logger.debug("Waiting {} sec before reply...", delay)
         await asyncio.sleep(delay)
 
+        # Re-check limits after delay (prevents race condition with concurrent messages)
+        allowed = await db.is_chat_allowed(message.chat_id)
+        if not allowed:
+            logger.info(
+                "Skipping reply in chat {} — limit reached after delay",
+                message.chat_id
+            )
+            return False
+
         # Get telegram_id of the chat
         chats = await db.get_active_chats()
         chat_map = {c["id"]: c["telegram_id"] for c in chats}
@@ -56,7 +65,11 @@ class Actor:
                 reply_to=message.telegram_message_id,
             )
         except Exception as e:
+            error_str = str(e)
             logger.error("Failed to send message in chat {}: {}", tg_chat_id, e)
+            # Permanently ban — no point retrying
+            if "banned" in error_str.lower() or "you can't write" in error_str.lower():
+                await db.deactivate_chat(message.chat_id, reason=error_str[:120])
             return False
 
         # Log to DB

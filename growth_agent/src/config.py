@@ -27,20 +27,27 @@ OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-
 POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")
 
 # --- Behaviour limits ---
-MAX_MESSAGES_PER_CHAT_PER_DAY: int = int(os.getenv("MAX_MESSAGES_PER_DAY", "3"))
-MIN_DELAY_BEFORE_REPLY_SEC: int = 30
-MAX_DELAY_BEFORE_REPLY_SEC: int = 120
-CHANNEL_LINK_EVERY_N_RESPONSES: int = 5   # include link not more often than 1 in 5
+MAX_MESSAGES_PER_CHAT_PER_DAY: int = int(os.getenv("MAX_MESSAGES_PER_DAY", "2"))
+MIN_DELAY_BEFORE_REPLY_SEC: int = 60
+MAX_DELAY_BEFORE_REPLY_SEC: int = 300
+MIN_INTERVAL_BETWEEN_REPLIES_SEC: int = int(os.getenv("MIN_INTERVAL_SEC", "3600"))  # 1 hour
+CHANNEL_LINK_EVERY_N_RESPONSES: int = 7   # include link not more often than 1 in 7
 
-# --- Relevance filter keywords (Russian) ---
-RELEVANCE_KEYWORDS: list[str] = [
-    "маржа", "маржинальность", "товар", "товары",
-    "китай", "1688", "alibaba", "поставщик", "поставщики",
-    "закупка", "закупать", "фабрика", "завод",
-    "импорт", "wb", "wildberries", "ozon", "озон",
-    "продавец", "селлер", "маркетплейс",
-    "карточка", "ниша", "конкуренция", "сток",
-]
+# --- Relevance filter keywords ---
+# Set via RELEVANCE_KEYWORDS in .env as comma-separated list.
+# Default: marketplace seller keywords (WB/Ozon/China import).
+_kw_env = os.getenv("RELEVANCE_KEYWORDS", "")
+if _kw_env.strip():
+    RELEVANCE_KEYWORDS: list[str] = [k.strip() for k in _kw_env.split(",") if k.strip()]
+else:
+    RELEVANCE_KEYWORDS = [
+        "маржа", "маржинальность", "товар", "товары",
+        "китай", "1688", "alibaba", "поставщик", "поставщики",
+        "закупка", "закупать", "фабрика", "завод",
+        "импорт", "wb", "wildberries", "ozon", "озон",
+        "продавец", "селлер", "маркетплейс",
+        "карточка", "ниша", "конкуренция", "сток",
+    ]
 
 # Minimum relevance score to process a message (0.0–1.0)
 MIN_RELEVANCE_SCORE: float = 0.3

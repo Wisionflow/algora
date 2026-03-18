@@ -9,6 +9,7 @@ For each relevant message decides:
 import json
 import uuid
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from loguru import logger
@@ -19,6 +20,15 @@ from .models import Message, BrainDecision
 # Global NATS connection (initialized by run_agent.py)
 _nc = None
 
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def _load_prompt(filename: str) -> str:
+    """Load prompt from prompts/ directory and substitute {AGENT_NAME} / {CHANNEL_LINK}."""
+    path = _PROMPTS_DIR / filename
+    text = path.read_text(encoding="utf-8")
+    return text.replace("{AGENT_NAME}", config.AGENT_NAME).replace("{CHANNEL_LINK}", config.CHANNEL_LINK)
+
 
 def init_nats(nc) -> None:
     """Set the NATS connection for LLM calls."""
@@ -26,36 +36,12 @@ def init_nats(nc) -> None:
     _nc = nc
 
 
-SYSTEM_PROMPT = f"""Ты эксперт по импорту товаров из Китая для продажи на российских маркетплейсах (Wildberries, Ozon).
-Тебя зовут {config.AGENT_NAME}. Ты участник чата.
-
-Правила:
-1. Отвечай ТОЛЬКО если можешь дать конкретную пользу (цифры, факты, опыт)
-2. Не отвечай на оффтоп, политику, конфликты, шутки
-3. Не рекламируй канал напрямую. Если спросят откуда знаешь — скажи "веду канал {config.CHANNEL_LINK}, там ежедневная аналитика"
-4. Не отвечай чаще 3 раз в день в одном чате
-5. Пиши коротко (2-5 предложений), по делу, с цифрами где возможно
-6. Тон: профессиональный, уверенный, без эмодзи-спама"""
-
-DECISION_PROMPT = """Ты получил сообщение из Telegram-чата.
-
-Сообщение: "{text}"
-
-Ответь строго в JSON:
-{{
-  "should_respond": true/false,
-  "reason": "краткая причина",
-  "response": "текст ответа (только если should_respond=true, иначе null)"
-}}
-
-Критерии для should_respond=true:
-- Вопрос по теме импорта/маркетплейсов, на который есть конкретный полезный ответ
-- Есть что добавить фактами или цифрами
-
-Критерии для should_respond=false:
-- Оффтоп, политика, шутки, флуд
-- Вопрос слишком общий или личный
-- Уже есть хороший ответ в чате"""
+# Prompts are loaded once at import time from prompts/ directory.
+# Edit the .txt files to customise agent behaviour — no code changes needed.
+SYSTEM_PROMPT = _load_prompt("system_prompt.txt")
+DECISION_PROMPT = _load_prompt("decision_prompt.txt")
+DM_SYSTEM_PROMPT = _load_prompt("dm_system_prompt.txt")
+DM_RESPONSE_PROMPT = _load_prompt("dm_response_prompt.txt")
 
 
 async def _call_llm(messages: list[dict]) -> str:
@@ -69,8 +55,8 @@ async def _call_llm(messages: list[dict]) -> str:
         "agent": "cmo_growth",
         "model": config.OPENROUTER_MODEL,
         "messages": messages,
-        "max_tokens": 300,
-        "temperature": 0.7,
+        "max_tokens": 150,
+        "temperature": 0.4,
     }
     payload = json.dumps(request, ensure_ascii=False).encode()
     logger.debug("LLM request sending: id={}", request_id)
@@ -100,7 +86,21 @@ async def think(message: Message) -> BrainDecision:
         logger.warning("NATS not connected — skipping Brain")
         return BrainDecision(should_respond=False, reason="no_nats")
 
-    prompt_text = DECISION_PROMPT.format(text=message.text)
+    # Build context from recent messages
+    recent = await db.get_recent_messages(
+        chat_id=message.chat_id, limit=5, before_id=message.id or 0
+    )
+    context_lines = []
+    for m in recent:
+        short_text = m["text"][:150]
+        context_lines.append(f"{m['sender_name']}: {short_text}")
+    context_str = "\n".join(context_lines) if context_lines else "(нет предыдущих сообщений)"
+
+    prompt_text = DECISION_PROMPT.format(
+        text=message.text,
+        sender=message.sender_name,
+        context=context_str,
+    )
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -139,7 +139,7 @@ async def think(message: Message) -> BrainDecision:
     # Decide whether to append channel link
     include_link = await _should_include_link(message.chat_id)
     if include_link:
-        response_text = f"{response_text}\n\nБольше аналитики — {config.CHANNEL_LINK}"
+        response_text = f"{response_text}\n\nу меня в канале {config.CHANNEL_LINK} писал про это кст"
 
     logger.info(
         "Brain decision: respond={} link={} reason={} | {}",
@@ -153,3 +153,37 @@ async def think(message: Message) -> BrainDecision:
         include_channel_link=include_link,
         llm_model=config.OPENROUTER_MODEL,
     )
+
+
+async def think_dm(sender_name: str, text: str) -> Optional[str]:
+    """Decide how to reply to a private message. Returns response text or None."""
+    if _nc is None:
+        logger.warning("NATS not connected — skipping DM Brain")
+        return None
+
+    prompt_text = DM_RESPONSE_PROMPT.format(text=text)
+    messages = [
+        {"role": "system", "content": DM_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt_text},
+    ]
+
+    try:
+        raw = await _call_llm(messages)
+    except Exception as e:
+        ename = type(e).__name__
+        logger.error("DM LLM call failed: {} ({})", e, ename)
+        return None
+
+    try:
+        clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(clean)
+        response_text = data.get("response") or None
+    except json.JSONDecodeError:
+        logger.warning("DM Brain returned non-JSON: {}", raw[:200])
+        return None
+
+    if not response_text:
+        return None
+
+    logger.info("DM Brain response for {}: {}", sender_name, response_text[:80])
+    return response_text

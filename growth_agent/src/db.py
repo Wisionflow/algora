@@ -95,6 +95,24 @@ async def get_message_by_id(message_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_recent_messages(chat_id: int, limit: int = 5, before_id: int = 0) -> list[dict]:
+    """Get recent messages in a chat for context. Returns oldest-first."""
+    pool = _pool_or_raise()
+    if before_id > 0:
+        rows = await pool.fetch("""
+            SELECT sender_name, text FROM messages
+            WHERE chat_id = $1 AND id < $2
+            ORDER BY id DESC LIMIT $3
+        """, chat_id, before_id, limit)
+    else:
+        rows = await pool.fetch("""
+            SELECT sender_name, text FROM messages
+            WHERE chat_id = $1
+            ORDER BY id DESC LIMIT $2
+        """, chat_id, limit)
+    return [dict(r) for r in reversed(rows)]
+
+
 # --- RESPONSES ---
 
 async def save_response(resp: Response) -> int:
@@ -199,8 +217,24 @@ async def set_cooldown(chat_id: int, until: datetime) -> None:
     )
 
 
+async def deactivate_chat(chat_id: int, reason: str = "") -> None:
+    """Permanently disable a chat (e.g. after ban — will never retry)."""
+    pool = _pool_or_raise()
+    await pool.execute(
+        "UPDATE schedule SET is_active = false WHERE chat_id = $1",
+        chat_id
+    )
+    await pool.execute(
+        "UPDATE chats SET our_status = 'banned' WHERE id = $1",
+        chat_id
+    )
+    logger.warning("Chat {} permanently deactivated: {}", chat_id, reason)
+
+
 async def is_chat_allowed(chat_id: int) -> bool:
     """Check if we can send to this chat right now."""
+    from . import config
+
     sched = await get_or_create_schedule(chat_id)
     if not sched["is_active"]:
         return False
@@ -208,4 +242,9 @@ async def is_chat_allowed(chat_id: int) -> bool:
         return False
     if sched["messages_today"] >= sched["max_messages_per_day"]:
         return False
+    # Enforce minimum interval between replies in the same chat
+    if sched["last_message_at"]:
+        elapsed = (datetime.now(timezone.utc) - sched["last_message_at"]).total_seconds()
+        if elapsed < config.MIN_INTERVAL_BETWEEN_REPLIES_SEC:
+            return False
     return True
