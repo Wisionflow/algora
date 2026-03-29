@@ -231,6 +231,146 @@ async def deactivate_chat(chat_id: int, reason: str = "") -> None:
     logger.warning("Chat {} permanently deactivated: {}", chat_id, reason)
 
 
+# --- DM INTERACTIONS ---
+
+async def save_dm(sender_id: int, sender_name: str, message_text: str,
+                  dm_type: str = "unknown", response_text: str | None = None,
+                  responded: bool = False) -> int:
+    """Save a DM interaction. Returns internal id."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("""
+        INSERT INTO dm_interactions (sender_id, sender_name, message_text, dm_type,
+                                     response_text, responded, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        RETURNING id
+    """, sender_id, sender_name, message_text, dm_type, response_text, responded)
+    return row["id"]
+
+
+async def get_last_dm_response_time(sender_id: int) -> Optional[datetime]:
+    """Get timestamp of last DM response to this user. Returns None if never responded."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("""
+        SELECT created_at FROM dm_interactions
+        WHERE sender_id = $1 AND responded = true
+        ORDER BY created_at DESC LIMIT 1
+    """, sender_id)
+    return row["created_at"] if row else None
+
+
+async def get_dm_stats() -> dict:
+    """Get DM interaction statistics."""
+    pool = _pool_or_raise()
+    total = await pool.fetchrow("SELECT COUNT(*) as cnt FROM dm_interactions")
+    responded = await pool.fetchrow(
+        "SELECT COUNT(*) as cnt FROM dm_interactions WHERE responded = true")
+    by_type = await pool.fetch("""
+        SELECT dm_type, COUNT(*) as cnt FROM dm_interactions
+        GROUP BY dm_type ORDER BY cnt DESC
+    """)
+    return {
+        "total_dms": total["cnt"],
+        "responded": responded["cnt"],
+        "by_type": {r["dm_type"]: r["cnt"] for r in by_type},
+    }
+
+
+# --- ANALYTICS QUERIES ---
+
+async def get_agent_stats(days: int = 30) -> dict:
+    """Get comprehensive agent performance stats for the last N days."""
+    pool = _pool_or_raise()
+    since = f"NOW() - INTERVAL '{days} days'"
+
+    # Messages seen
+    msgs = await pool.fetchrow(f"""
+        SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_relevant) as relevant
+        FROM messages WHERE created_at >= {since}
+    """)
+
+    # Responses sent
+    resps = await pool.fetchrow(f"""
+        SELECT COUNT(*) as total,
+               COUNT(*) FILTER (WHERE included_channel_link) as with_link
+        FROM responses WHERE sent_at >= {since}
+    """)
+
+    # Responses by chat
+    by_chat = await pool.fetch(f"""
+        SELECT c.title, c.member_count, COUNT(r.id) as responses,
+               COUNT(r.id) FILTER (WHERE r.included_channel_link) as links
+        FROM responses r JOIN chats c ON c.id = r.chat_id
+        WHERE r.sent_at >= {since}
+        GROUP BY c.title, c.member_count
+        ORDER BY responses DESC
+    """)
+
+    # Active chats
+    active = await pool.fetchrow(
+        "SELECT COUNT(*) as cnt FROM schedule WHERE is_active = true")
+
+    # Banned chats
+    banned = await pool.fetchrow(
+        "SELECT COUNT(*) as cnt FROM chats WHERE our_status = 'banned'")
+
+    # DMs
+    dms = await pool.fetchrow(f"""
+        SELECT COUNT(*) as total,
+               COUNT(*) FILTER (WHERE responded) as responded
+        FROM dm_interactions WHERE created_at >= {since}
+    """)
+
+    # Daily breakdown (last 7 days)
+    daily = await pool.fetch("""
+        SELECT d.day,
+               COALESCE(m.msgs, 0) as messages_seen,
+               COALESCE(m.relevant, 0) as relevant_messages,
+               COALESCE(r.responses, 0) as responses_sent,
+               COALESCE(dm.dms, 0) as dms_received
+        FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day'::interval) d(day)
+        LEFT JOIN (
+            SELECT created_at::date as day, COUNT(*) as msgs,
+                   COUNT(*) FILTER (WHERE is_relevant) as relevant
+            FROM messages GROUP BY day
+        ) m ON m.day = d.day
+        LEFT JOIN (
+            SELECT sent_at::date as day, COUNT(*) as responses
+            FROM responses GROUP BY day
+        ) r ON r.day = d.day
+        LEFT JOIN (
+            SELECT created_at::date as day, COUNT(*) as dms
+            FROM dm_interactions GROUP BY day
+        ) dm ON dm.day = d.day
+        ORDER BY d.day
+    """)
+
+    # Metrics history
+    metrics_hist = await pool.fetch("""
+        SELECT date, channel_subscribers, new_subscribers
+        FROM metrics ORDER BY date DESC LIMIT 30
+    """)
+
+    return {
+        "period_days": days,
+        "messages_seen": msgs["total"],
+        "messages_relevant": msgs["relevant"],
+        "responses_sent": resps["total"],
+        "responses_with_link": resps["with_link"],
+        "active_chats": active["cnt"],
+        "banned_chats": banned["cnt"],
+        "dms_total": dms["total"] if dms["total"] else 0,
+        "dms_responded": dms["responded"] if dms["responded"] else 0,
+        "by_chat": [dict(r) for r in by_chat],
+        "daily": [{"day": str(r["day"]), "messages_seen": r["messages_seen"],
+                    "relevant": r["relevant_messages"],
+                    "responses": r["responses_sent"],
+                    "dms": r["dms_received"]} for r in daily],
+        "subscriber_history": [{"date": str(r["date"]),
+                                "subscribers": r["channel_subscribers"],
+                                "new": r["new_subscribers"]} for r in metrics_hist],
+    }
+
+
 async def is_chat_allowed(chat_id: int) -> bool:
     """Check if we can send to this chat right now."""
     from . import config

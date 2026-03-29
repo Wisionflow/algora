@@ -75,9 +75,21 @@ CREATE TABLE IF NOT EXISTS schedule (
     cooldown_until        TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS dm_interactions (
+    id              SERIAL PRIMARY KEY,
+    sender_id       BIGINT NOT NULL,
+    sender_name     TEXT NOT NULL,
+    message_text    TEXT NOT NULL,
+    dm_type         TEXT DEFAULT 'unknown',
+    response_text   TEXT,
+    responded       BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_responses_chat_sent   ON responses(chat_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_metrics_date          ON metrics(date);
+CREATE INDEX IF NOT EXISTS idx_dm_sender_created     ON dm_interactions(sender_id, created_at);
 """
 
 

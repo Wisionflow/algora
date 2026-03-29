@@ -155,11 +155,15 @@ async def think(message: Message) -> BrainDecision:
     )
 
 
-async def think_dm(sender_name: str, text: str) -> Optional[str]:
-    """Decide how to reply to a private message. Returns response text or None."""
+async def think_dm(sender_name: str, text: str) -> tuple[Optional[str], str]:
+    """Decide how to reply to a private message.
+
+    Returns (response_text, dm_type).
+    dm_type is one of: service_offer, question, collaboration, spam, unknown.
+    """
     if _nc is None:
         logger.warning("NATS not connected — skipping DM Brain")
-        return None
+        return None, "unknown"
 
     prompt_text = DM_RESPONSE_PROMPT.format(text=text)
     messages = [
@@ -172,18 +176,17 @@ async def think_dm(sender_name: str, text: str) -> Optional[str]:
     except Exception as e:
         ename = type(e).__name__
         logger.error("DM LLM call failed: {} ({})", e, ename)
-        return None
+        return None, "unknown"
 
     try:
         clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         data = json.loads(clean)
         response_text = data.get("response") or None
+        dm_type = data.get("dm_type", "unknown")
     except json.JSONDecodeError:
         logger.warning("DM Brain returned non-JSON: {}", raw[:200])
-        return None
+        return None, "unknown"
 
-    if not response_text:
-        return None
-
-    logger.info("DM Brain response for {}: {}", sender_name, response_text[:80])
-    return response_text
+    logger.info("DM type={} for {} | response: {}", dm_type, sender_name,
+                (response_text or "none")[:80])
+    return response_text, dm_type

@@ -9,6 +9,7 @@ import asyncio
 import sys
 import os
 import argparse
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -17,8 +18,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src import config
+from src import config, db
 from src.models import Message, BrainDecision
+
+_DM_COOLDOWN_SEC = 86400  # 24 hours per user
 
 
 async def on_message(message: Message, actor) -> None:
@@ -26,6 +29,40 @@ async def on_message(message: Message, actor) -> None:
     from src.brain import think
     decision: BrainDecision = await think(message)
     await actor.act(message, decision)
+
+
+async def on_dm(sender_id: int, sender_name: str, text: str, client) -> None:
+    """Pipeline: DM → classify → respond → persist to DB."""
+    from src.brain import think_dm
+
+    now = datetime.now(timezone.utc)
+
+    # Rate limit check from DB (persistent across restarts)
+    last = await db.get_last_dm_response_time(sender_id)
+    if last and (now - last).total_seconds() < _DM_COOLDOWN_SEC:
+        logger.debug("DM rate limit: skipping user {} ({})", sender_id, sender_name)
+        # Still save the incoming DM for stats
+        await db.save_dm(sender_id, sender_name, text, dm_type="rate_limited")
+        return
+
+    response_text, dm_type = await think_dm(sender_name, text)
+
+    if not response_text:
+        # Save even unanswered DMs (spam, errors) for tracking
+        await db.save_dm(sender_id, sender_name, text, dm_type=dm_type, responded=False)
+        logger.info("DM from {} ({}) type={} — no response", sender_id, sender_name, dm_type)
+        return
+
+    try:
+        await client.send_message(entity=sender_id, message=response_text)
+        await db.save_dm(sender_id, sender_name, text, dm_type=dm_type,
+                         response_text=response_text, responded=True)
+        logger.info("DM replied to {} ({}) type={}: {}", sender_id, sender_name,
+                     dm_type, response_text[:80])
+    except Exception as e:
+        await db.save_dm(sender_id, sender_name, text, dm_type=dm_type,
+                         response_text=f"SEND_ERROR: {e}", responded=False)
+        logger.error("Failed to send DM to {} ({}): {}", sender_id, sender_name, e)
 
 
 async def run_mock() -> None:
@@ -148,7 +185,11 @@ async def run_live() -> None:
     async def message_handler(message: Message) -> None:
         await on_message(message, actor)
 
+    async def dm_callback(sender_id: int, sender_name: str, text: str) -> None:
+        await on_dm(sender_id, sender_name, text, listener._client)
+
     listener._callback = message_handler
+    listener._dm_callback = dm_callback
 
     logger.info("Growth Agent started. Monitoring chats...")
 

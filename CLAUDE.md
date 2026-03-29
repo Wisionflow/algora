@@ -52,9 +52,35 @@ python -X utf8 -m scripts.scheduler --test    # dry-run
 - Стоимость vision: ~180 руб/мес при 10 проверках/день
 - Файл: src/analyze/image_validator.py
 
+## Growth Agent «Максим» (growth_agent/)
+### Запуск
+    python -m scripts.run_agent           # Normal run
+    python -m scripts.run_agent --mock    # Mock mode (no real TG)
+
+### Аналитика
+    python -m scripts.stats               # Полный отчёт 30 дней
+    python -m scripts.stats --days 7 --daily  # По дням
+    python -m scripts.stats --dms         # DM по типам
+
+### Утилиты
+    python -m scripts.sync_chats          # Синхронизация чатов → DB
+    python -m scripts.scout_chats         # Поиск новых чатов
+    python -m scripts.setup_db            # Создание таблиц
+
+### Ключевые параметры (.env)
+- AGENT_NAME=Максим
+- MAX_MESSAGES_PER_DAY=3
+- CHANNEL_LINK_EVERY_N_RESPONSES=5
+- MIN_INTERVAL_SEC=3600
+
+### DM-классификация
+Входящие DM классифицируются: service_offer / question / collaboration / spam.
+Все DM логируются в таблицу dm_interactions (PostgreSQL).
+
 ## Правила
 - НИКОГДА не выводи значения API-ключей и токенов
 - Для тестирования используй --dry-run
 - Python 3.12 (как в CI)
-- База данных: data/algora.db (SQLite)
+- База данных контента: data/algora.db (SQLite)
+- База агента: PostgreSQL (POSTGRES_DSN в growth_agent/.env)
 - Логи: data/algora.log
