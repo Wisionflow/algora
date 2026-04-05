@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "project": "ALGORA",
+    "description": "Brand colors for AI analytics platform",
+    "version": "1.0"
+  },
+  "palette": {
+    "primary": {
+      "hex": "#0F172A",
+      "rgb": "15, 23, 42",
+      "name": "Deep Neural Blue",
+      "usage": "Main backgrounds, headers, primary buttons"
+    },
+    "secondary": {
+      "hex": "#6366F1",
+      "rgb": "99, 102, 241",
+      "name": "Data Violet",
+      "usage": "Gradients, active states, illustrations"
+    },
+    "accent": {
+      "hex": "#10B981",
+      "rgb": "16, 185, 129",
+      "name": "Margin Mint",
+      "usage": "Call to actions, success indicators, high profit markers"
+    },
+    "background_light": {
+      "hex": "#F8FAFC",
+      "rgb": "248, 250, 252",
+      "name": "Clean Slate",
+      "usage": "Page background (Light mode), PDF reports"
+    },
+    "background_dark": {
+      "hex": "#1E293B",
+      "rgb": "30, 41, 59",
+      "name": "Dark Interface",
+      "usage": "Cards background (Dark mode), sidebars"
+    },
+    "text_main": {
+      "hex": "#334155",
+      "rgb": "51, 65, 85",
+      "name": "Readable Ink",
+      "usage": "Body text on light background"
+    },
+    "text_inverse": {
+      "hex": "#F1F5F9",
+      "rgb": "241, 245, 249",
+      "name": "Bright Text",
+      "usage": "Body text on dark background"
+    },
+    "success": {
+      "hex": "#10B981",
+      "rgb": "16, 185, 129",
+      "name": "Success",
+      "usage": "Positive trends, verified suppliers"
+    },
+    "warning": {
+      "hex": "#F59E0B",
+      "rgb": "245, 158, 11",
+      "name": "Warning",
+      "usage": "Medium competition, attention needed"
+    },
+    "error": {
+      "hex": "#EF4444",
+      "rgb": "239, 68, 68",
+      "name": "Danger",
+      "usage": "Negative margin, high competition risks"
+    }
+  }
+}

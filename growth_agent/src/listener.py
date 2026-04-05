@@ -27,12 +27,15 @@ class Listener:
     def __init__(
         self,
         on_relevant_message: Callable[[Message], Awaitable[None]],
+        on_dm_message: Callable[[int, str, str], Awaitable[None]] | None = None,
     ):
         """
         on_relevant_message: async callback called when a relevant message is saved.
         Passes the saved Message (with DB id) to Brain.
+        on_dm_message: async callback(sender_id, sender_name, text) for private messages.
         """
         self._callback = on_relevant_message
+        self._dm_callback = on_dm_message
         self._client: TelegramClient | None = None
         self._chat_ids: set[int] = set()  # telegram_id of monitored chats
         self._chat_map: dict[int, int] = {}  # telegram_id -> internal DB id
@@ -70,6 +73,20 @@ class Listener:
 
     def _register_handlers(self) -> None:
         assert self._client is not None
+
+        @self._client.on(events.NewMessage(func=lambda e: e.is_private))
+        async def dm_handler(event: events.NewMessage.Event):
+            if self._dm_callback is None:
+                return
+            msg: TgMessage = event.message
+            text = msg.message or ""
+            if not text.strip():
+                return
+            sender = await event.get_sender()
+            sender_id = event.sender_id
+            sender_name = getattr(sender, "username", None) or getattr(sender, "first_name", "unknown")
+            logger.debug("DM from {} ({}): {}", sender_id, sender_name, text[:80])
+            await self._dm_callback(sender_id, str(sender_name), text)
 
         @self._client.on(events.NewMessage)
         async def handler(event: events.NewMessage.Event):
