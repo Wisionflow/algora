@@ -2,13 +2,12 @@
 
 For each relevant message decides:
   1. Should we respond? (yes/no + reason)
-  2. What to write?
-  3. Include channel link? (not more often than 1 in N responses)
+  2. What to write? (NO channel links in chat — links get deleted by admins)
+  3. After chat response — generate follow-up DM with channel link
 """
 
 import json
 import re
-import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -36,12 +35,12 @@ def init_client() -> None:
     _client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
-# Prompts are loaded once at import time from prompts/ directory.
-# Edit the .txt files to customise agent behaviour — no code changes needed.
+# Prompts loaded once at import time.
 SYSTEM_PROMPT = _load_prompt("system_prompt.txt")
 DECISION_PROMPT = _load_prompt("decision_prompt.txt")
 DM_SYSTEM_PROMPT = _load_prompt("dm_system_prompt.txt")
 DM_RESPONSE_PROMPT = _load_prompt("dm_response_prompt.txt")
+FOLLOWUP_DM_PROMPT = _load_prompt("followup_dm_prompt.txt")
 
 
 async def _call_llm(messages: list[dict], system: str = "") -> str:
@@ -49,7 +48,6 @@ async def _call_llm(messages: list[dict], system: str = "") -> str:
     if _client is None:
         raise RuntimeError("Claude client not initialized. Call brain.init_client() first.")
 
-    # Claude API uses system as separate param, user/assistant in messages
     user_messages = [m for m in messages if m["role"] != "system"]
 
     response = await _client.messages.create(
@@ -69,19 +67,16 @@ _JSON_BLOCK_RE = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)
 
 def _parse_json_response(raw: str) -> dict:
     """Extract JSON from LLM response, handling ```json blocks and trailing commentary."""
-    # Try 1: direct parse
     stripped = raw.strip()
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
         pass
 
-    # Try 2: extract from ```json ... ``` block (ignoring text after closing ```)
     m = _JSON_BLOCK_RE.search(stripped)
     if m:
         return json.loads(m.group(1))
 
-    # Try 3: find first { ... } in the text
     start = stripped.find('{')
     end = stripped.rfind('}')
     if start != -1 and end > start:
@@ -90,16 +85,8 @@ def _parse_json_response(raw: str) -> dict:
     raise ValueError("No JSON found in response")
 
 
-async def _should_include_link(chat_id: int) -> bool:
-    """Return True if we should include channel link in this response."""
-    links_in_last_n = await db.count_responses_for_link_ratio(
-        chat_id, last_n=config.CHANNEL_LINK_EVERY_N_RESPONSES
-    )
-    return links_in_last_n == 0
-
-
 async def think(message: Message) -> BrainDecision:
-    """Main decision function. Returns BrainDecision."""
+    """Main decision function for chat messages. NEVER includes channel link."""
     if _client is None:
         logger.warning("Claude client not initialized — skipping Brain")
         return BrainDecision(should_respond=False, reason="no_client")
@@ -114,25 +101,10 @@ async def think(message: Message) -> BrainDecision:
         context_lines.append(f"{m['sender_name']}: {short_text}")
     context_str = "\n".join(context_lines) if context_lines else "(нет предыдущих сообщений)"
 
-    # Decide whether to include channel link BEFORE LLM call
-    include_link = await _should_include_link(message.chat_id)
-    if include_link:
-        link_instruction = (
-            f"ВАЖНО: В этом ответе ОБЯЗАТЕЛЬНО упомяни канал {config.CHANNEL_LINK} — "
-            "но ОРГАНИЧНО, через тему вопроса. Варианты:\n"
-            f"- \"я это разбирал в {config.CHANNEL_LINK} с цифрами\"\n"
-            f"- \"в {config.CHANNEL_LINK} у меня пост про [тема], глянь\"\n"
-            f"- \"подпишись на {config.CHANNEL_LINK}, там как раз про это\"\n"
-            "Выбери подходящий вариант или придумай свой. НЕ используй \"писал про это кст\"."
-        )
-    else:
-        link_instruction = "В этом ответе НЕ упоминай канал."
-
     prompt_text = DECISION_PROMPT.format(
         text=message.text,
         sender=message.sender_name,
         context=context_str,
-        link_instruction=link_instruction,
     )
 
     messages = [
@@ -146,7 +118,6 @@ async def think(message: Message) -> BrainDecision:
         logger.error("Claude call failed: {}", e)
         return BrainDecision(should_respond=False, reason=f"llm_error:{e}")
 
-    # Parse JSON response — Claude may add commentary after the JSON block
     try:
         data = _parse_json_response(raw)
     except (json.JSONDecodeError, ValueError):
@@ -164,26 +135,68 @@ async def think(message: Message) -> BrainDecision:
             llm_model=config.CLAUDE_MODEL,
         )
 
-    # Verify link was actually included if requested
-    if include_link and config.CHANNEL_LINK not in response_text:
-        response_text = f"{response_text}\n\n{config.CHANNEL_LINK} — там подробнее разбирал"
+    # Safety: strip any accidental channel link from chat response
+    if config.CHANNEL_LINK in response_text:
+        response_text = response_text.replace(config.CHANNEL_LINK, "").strip()
 
     logger.info(
-        "Brain decision: respond={} link={} reason={} | {}",
-        should_respond, include_link, reason, response_text[:80]
+        "Brain decision: respond=True reason={} | {}",
+        reason, response_text[:80]
     )
 
     return BrainDecision(
         should_respond=True,
         reason=reason,
         response_text=response_text,
-        include_channel_link=include_link,
+        include_channel_link=False,  # NEVER in chat
         llm_model=config.CLAUDE_MODEL,
     )
 
 
+async def think_followup_dm(question: str, chat_response: str) -> Optional[str]:
+    """Generate a follow-up DM to send after answering in chat.
+
+    Returns DM text with channel link, or None if generation fails.
+    """
+    if _client is None:
+        return None
+
+    prompt_text = FOLLOWUP_DM_PROMPT.format(
+        question=question,
+        chat_response=chat_response,
+    )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt_text},
+    ]
+
+    try:
+        raw = await _call_llm(messages)
+    except Exception as e:
+        logger.error("Follow-up DM LLM failed: {}", e)
+        return None
+
+    try:
+        data = _parse_json_response(raw)
+        dm_text = data.get("dm_text") or None
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Follow-up DM non-JSON: {}", raw[:200])
+        return None
+
+    if not dm_text:
+        return None
+
+    # Ensure channel link is present
+    if config.CHANNEL_LINK not in dm_text:
+        dm_text = f"{dm_text}\n\n{config.CHANNEL_LINK}"
+
+    logger.info("Follow-up DM generated: {}", dm_text[:80])
+    return dm_text
+
+
 async def think_dm(sender_name: str, text: str) -> tuple[Optional[str], str]:
-    """Decide how to reply to a private message.
+    """Decide how to reply to an incoming private message.
 
     Returns (response_text, dm_type).
     dm_type is one of: service_offer, question, collaboration, spam, unknown.

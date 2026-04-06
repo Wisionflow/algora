@@ -22,13 +22,73 @@ from src import config, db
 from src.models import Message, BrainDecision
 
 _DM_COOLDOWN_SEC = 86400  # 24 hours per user
+_MAX_OUTBOUND_DMS_PER_DAY = 5  # limit follow-up DMs to avoid Telegram restrictions
+_FOLLOWUP_DM_DELAY_SEC = (120, 300)  # 2-5 min delay before sending DM
 
 
-async def on_message(message: Message, actor) -> None:
-    """Pipeline: Message → Brain → Actor."""
-    from src.brain import think
+async def on_message(message: Message, actor, client) -> None:
+    """Pipeline: Message → Brain → Actor → Follow-up DM."""
+    import random
+    from src.brain import think, think_followup_dm
+
     decision: BrainDecision = await think(message)
-    await actor.act(message, decision)
+    sent = await actor.act(message, decision)
+
+    # If we replied in chat — send follow-up DM to the message author
+    if sent and decision.response_text:
+        outbound_today = await db.count_outbound_dms_today()
+        if outbound_today >= _MAX_OUTBOUND_DMS_PER_DAY:
+            logger.debug("Outbound DM limit reached ({}/day), skipping follow-up", _MAX_OUTBOUND_DMS_PER_DAY)
+            return
+
+        dm_text = await think_followup_dm(
+            question=message.text,
+            chat_response=decision.response_text,
+        )
+        if not dm_text:
+            return
+
+        # Delay to seem natural (2-5 min after chat response)
+        delay = random.randint(*_FOLLOWUP_DM_DELAY_SEC)
+        logger.info("Scheduling follow-up DM in {}s to {} | {}", delay, message.sender_name, dm_text[:60])
+
+        async def _send_followup():
+            await asyncio.sleep(delay)
+            try:
+                # Resolve user by replying to the original message's sender
+                # We get the chat message and extract sender
+                chats = await db.get_active_chats()
+                chat_map = {c["id"]: c["telegram_id"] for c in chats}
+                tg_chat_id = chat_map.get(message.chat_id)
+                if not tg_chat_id:
+                    return
+
+                # Get the original Telegram message to find sender
+                tg_msgs = await client.get_messages(tg_chat_id, ids=message.telegram_message_id)
+                if not tg_msgs or not tg_msgs.sender_id:
+                    logger.warning("Could not resolve sender for follow-up DM")
+                    return
+
+                target_user_id = tg_msgs.sender_id
+
+                # Check if we already DM'd this user recently
+                last = await db.get_last_dm_response_time(target_user_id)
+                if last:
+                    elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+                    if elapsed < _DM_COOLDOWN_SEC:
+                        logger.debug("Follow-up DM skipped — already DM'd user {} recently", target_user_id)
+                        return
+
+                await client.send_message(entity=target_user_id, message=dm_text)
+                await db.save_dm(
+                    target_user_id, message.sender_name, f"[followup] {message.text[:100]}",
+                    dm_type="followup", response_text=dm_text, responded=True
+                )
+                logger.info("Follow-up DM sent to {} ({}): {}", target_user_id, message.sender_name, dm_text[:60])
+            except Exception as e:
+                logger.error("Follow-up DM failed to {}: {}", message.sender_name, e)
+
+        asyncio.create_task(_send_followup())
 
 
 async def on_dm(sender_id: int, sender_name: str, text: str, client) -> None:
@@ -172,7 +232,7 @@ async def run_live() -> None:
     actor = Actor(listener._client)
 
     async def message_handler(message: Message) -> None:
-        await on_message(message, actor)
+        await on_message(message, actor, listener._client)
 
     async def dm_callback(sender_id: int, sender_name: str, text: str) -> None:
         await on_dm(sender_id, sender_name, text, listener._client)

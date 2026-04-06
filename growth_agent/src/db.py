@@ -258,6 +258,16 @@ async def get_last_dm_response_time(sender_id: int) -> Optional[datetime]:
     return row["created_at"] if row else None
 
 
+async def count_outbound_dms_today() -> int:
+    """Count outbound follow-up DMs sent today (to limit daily volume)."""
+    pool = _pool_or_raise()
+    row = await pool.fetchrow("""
+        SELECT COUNT(*) as cnt FROM dm_interactions
+        WHERE dm_type = 'followup' AND created_at >= CURRENT_DATE
+    """)
+    return row["cnt"]
+
+
 async def get_dm_stats() -> dict:
     """Get DM interaction statistics."""
     pool = _pool_or_raise()
