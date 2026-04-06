@@ -1,4 +1,4 @@
-"""Brain — LLM decision engine (via NATS AI Proxy).
+"""Brain — LLM decision engine (via Claude API).
 
 For each relevant message decides:
   1. Should we respond? (yes/no + reason)
@@ -7,18 +7,17 @@ For each relevant message decides:
 """
 
 import json
-import uuid
 import asyncio
 from pathlib import Path
 from typing import Optional
 
+from anthropic import AsyncAnthropic
 from loguru import logger
 
 from . import config, db
 from .models import Message, BrainDecision
 
-# Global NATS connection (initialized by run_agent.py)
-_nc = None
+_client: Optional[AsyncAnthropic] = None
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -30,10 +29,10 @@ def _load_prompt(filename: str) -> str:
     return text.replace("{AGENT_NAME}", config.AGENT_NAME).replace("{CHANNEL_LINK}", config.CHANNEL_LINK)
 
 
-def init_nats(nc) -> None:
-    """Set the NATS connection for LLM calls."""
-    global _nc
-    _nc = nc
+def init_client() -> None:
+    """Initialize the Claude API client."""
+    global _client
+    _client = AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
 # Prompts are loaded once at import time from prompts/ directory.
@@ -44,32 +43,24 @@ DM_SYSTEM_PROMPT = _load_prompt("dm_system_prompt.txt")
 DM_RESPONSE_PROMPT = _load_prompt("dm_response_prompt.txt")
 
 
-async def _call_llm(messages: list[dict]) -> str:
-    """Call LLM via NATS AI Proxy using request-reply pattern."""
-    if _nc is None:
-        raise RuntimeError("NATS not initialized. Call brain.init_nats(nc) first.")
+async def _call_llm(messages: list[dict], system: str = "") -> str:
+    """Call Claude API directly."""
+    if _client is None:
+        raise RuntimeError("Claude client not initialized. Call brain.init_client() first.")
 
-    request_id = str(uuid.uuid4())
-    request = {
-        "request_id": request_id,
-        "agent": "cmo_growth",
-        "model": config.OPENROUTER_MODEL,
-        "messages": messages,
-        "max_tokens": 150,
-        "temperature": 0.4,
-    }
-    payload = json.dumps(request, ensure_ascii=False).encode()
-    logger.debug("LLM request sending: id={}", request_id)
+    # Claude API uses system as separate param, user/assistant in messages
+    user_messages = [m for m in messages if m["role"] != "system"]
 
-    # Use NATS request-reply (AI Proxy uses msg.respond())
-    response = await _nc.request("algora.ai.request", payload, timeout=30)
-    data = json.loads(response.data)
-    logger.debug("LLM response received: id={} success={}", request_id, data.get("success"))
-
-    if not data.get("success"):
-        raise RuntimeError(f"AI Proxy error: {data.get('error')} - {data.get('message')}")
-
-    return data["content"]
+    response = await _client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=150,
+        temperature=0.4,
+        system=system or next((m["content"] for m in messages if m["role"] == "system"), ""),
+        messages=user_messages,
+    )
+    text = response.content[0].text
+    logger.debug("Claude response: model={} tokens={}", config.CLAUDE_MODEL, response.usage.output_tokens)
+    return text
 
 
 async def _should_include_link(chat_id: int) -> bool:
@@ -82,9 +73,9 @@ async def _should_include_link(chat_id: int) -> bool:
 
 async def think(message: Message) -> BrainDecision:
     """Main decision function. Returns BrainDecision."""
-    if _nc is None:
-        logger.warning("NATS not connected — skipping Brain")
-        return BrainDecision(should_respond=False, reason="no_nats")
+    if _client is None:
+        logger.warning("Claude client not initialized — skipping Brain")
+        return BrainDecision(should_respond=False, reason="no_client")
 
     # Build context from recent messages
     recent = await db.get_recent_messages(
@@ -110,12 +101,8 @@ async def think(message: Message) -> BrainDecision:
     try:
         raw = await _call_llm(messages)
     except Exception as e:
-        ename = type(e).__name__
-        if "timeout" in ename.lower() or isinstance(e, asyncio.TimeoutError):
-            logger.error("LLM call timed out after 30s (no response from AI Proxy): {}", ename)
-            return BrainDecision(should_respond=False, reason="llm_timeout")
-        logger.error("LLM call failed: {} ({})", e, ename)
-        return BrainDecision(should_respond=False, reason=f"llm_error:{ename}:{e}")
+        logger.error("Claude call failed: {}", e)
+        return BrainDecision(should_respond=False, reason=f"llm_error:{e}")
 
     # Parse JSON response
     try:
@@ -133,7 +120,7 @@ async def think(message: Message) -> BrainDecision:
         return BrainDecision(
             should_respond=False,
             reason=reason,
-            llm_model=config.OPENROUTER_MODEL,
+            llm_model=config.CLAUDE_MODEL,
         )
 
     # Decide whether to append channel link
@@ -151,7 +138,7 @@ async def think(message: Message) -> BrainDecision:
         reason=reason,
         response_text=response_text,
         include_channel_link=include_link,
-        llm_model=config.OPENROUTER_MODEL,
+        llm_model=config.CLAUDE_MODEL,
     )
 
 
@@ -161,8 +148,8 @@ async def think_dm(sender_name: str, text: str) -> tuple[Optional[str], str]:
     Returns (response_text, dm_type).
     dm_type is one of: service_offer, question, collaboration, spam, unknown.
     """
-    if _nc is None:
-        logger.warning("NATS not connected — skipping DM Brain")
+    if _client is None:
+        logger.warning("Claude client not initialized — skipping DM Brain")
         return None, "unknown"
 
     prompt_text = DM_RESPONSE_PROMPT.format(text=text)
@@ -174,8 +161,7 @@ async def think_dm(sender_name: str, text: str) -> tuple[Optional[str], str]:
     try:
         raw = await _call_llm(messages)
     except Exception as e:
-        ename = type(e).__name__
-        logger.error("DM LLM call failed: {} ({})", e, ename)
+        logger.error("DM Claude call failed: {}", e)
         return None, "unknown"
 
     try:

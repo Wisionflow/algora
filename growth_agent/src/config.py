@@ -17,11 +17,9 @@ TG_SESSION_NAME: str = os.getenv("TG_SESSION_NAME", "growth_agent")
 AGENT_NAME: str = os.getenv("AGENT_NAME", "Максим")
 CHANNEL_LINK: str = os.getenv("CHANNEL_LINK", "@algora_trends")
 
-# --- NATS (AI Proxy) ---
-NATS_URL: str = os.getenv("NATS_URL", "nats://nats:4222")
-
-# --- LLM model (via NATS AI Proxy) ---
-OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
+# --- Claude API (direct) ---
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
 # --- PostgreSQL ---
 POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")
