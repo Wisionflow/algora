@@ -7,6 +7,7 @@ For each relevant message decides:
 """
 
 import json
+import re
 import asyncio
 from pathlib import Path
 from typing import Optional
@@ -61,6 +62,32 @@ async def _call_llm(messages: list[dict], system: str = "") -> str:
     text = response.content[0].text
     logger.debug("Claude response: model={} tokens={}", config.CLAUDE_MODEL, response.usage.output_tokens)
     return text
+
+
+_JSON_BLOCK_RE = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)
+
+
+def _parse_json_response(raw: str) -> dict:
+    """Extract JSON from LLM response, handling ```json blocks and trailing commentary."""
+    # Try 1: direct parse
+    stripped = raw.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    # Try 2: extract from ```json ... ``` block (ignoring text after closing ```)
+    m = _JSON_BLOCK_RE.search(stripped)
+    if m:
+        return json.loads(m.group(1))
+
+    # Try 3: find first { ... } in the text
+    start = stripped.find('{')
+    end = stripped.rfind('}')
+    if start != -1 and end > start:
+        return json.loads(stripped[start:end + 1])
+
+    raise ValueError("No JSON found in response")
 
 
 async def _should_include_link(chat_id: int) -> bool:
@@ -119,11 +146,10 @@ async def think(message: Message) -> BrainDecision:
         logger.error("Claude call failed: {}", e)
         return BrainDecision(should_respond=False, reason=f"llm_error:{e}")
 
-    # Parse JSON response
+    # Parse JSON response — Claude may add commentary after the JSON block
     try:
-        clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(clean)
-    except json.JSONDecodeError:
+        data = _parse_json_response(raw)
+    except (json.JSONDecodeError, ValueError):
         logger.warning("Brain returned non-JSON: {}", raw[:200])
         return BrainDecision(should_respond=False, reason="parse_error")
 
@@ -179,11 +205,10 @@ async def think_dm(sender_name: str, text: str) -> tuple[Optional[str], str]:
         return None, "unknown"
 
     try:
-        clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(clean)
+        data = _parse_json_response(raw)
         response_text = data.get("response") or None
         dm_type = data.get("dm_type", "unknown")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         logger.warning("DM Brain returned non-JSON: {}", raw[:200])
         return None, "unknown"
 
