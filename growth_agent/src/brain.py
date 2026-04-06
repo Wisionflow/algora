@@ -53,7 +53,7 @@ async def _call_llm(messages: list[dict], system: str = "") -> str:
 
     response = await _client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=150,
+        max_tokens=250,
         temperature=0.4,
         system=system or next((m["content"] for m in messages if m["role"] == "system"), ""),
         messages=user_messages,
@@ -87,10 +87,25 @@ async def think(message: Message) -> BrainDecision:
         context_lines.append(f"{m['sender_name']}: {short_text}")
     context_str = "\n".join(context_lines) if context_lines else "(нет предыдущих сообщений)"
 
+    # Decide whether to include channel link BEFORE LLM call
+    include_link = await _should_include_link(message.chat_id)
+    if include_link:
+        link_instruction = (
+            f"ВАЖНО: В этом ответе ОБЯЗАТЕЛЬНО упомяни канал {config.CHANNEL_LINK} — "
+            "но ОРГАНИЧНО, через тему вопроса. Варианты:\n"
+            f"- \"я это разбирал в {config.CHANNEL_LINK} с цифрами\"\n"
+            f"- \"в {config.CHANNEL_LINK} у меня пост про [тема], глянь\"\n"
+            f"- \"подпишись на {config.CHANNEL_LINK}, там как раз про это\"\n"
+            "Выбери подходящий вариант или придумай свой. НЕ используй \"писал про это кст\"."
+        )
+    else:
+        link_instruction = "В этом ответе НЕ упоминай канал."
+
     prompt_text = DECISION_PROMPT.format(
         text=message.text,
         sender=message.sender_name,
         context=context_str,
+        link_instruction=link_instruction,
     )
 
     messages = [
@@ -123,10 +138,9 @@ async def think(message: Message) -> BrainDecision:
             llm_model=config.CLAUDE_MODEL,
         )
 
-    # Decide whether to append channel link
-    include_link = await _should_include_link(message.chat_id)
-    if include_link:
-        response_text = f"{response_text}\n\nу меня в канале {config.CHANNEL_LINK} писал про это кст"
+    # Verify link was actually included if requested
+    if include_link and config.CHANNEL_LINK not in response_text:
+        response_text = f"{response_text}\n\n{config.CHANNEL_LINK} — там подробнее разбирал"
 
     logger.info(
         "Brain decision: respond={} link={} reason={} | {}",
