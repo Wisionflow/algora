@@ -1,12 +1,13 @@
 name: Algora Autopost
 
 on:
-  schedule:
-    # Twice daily during channel growth sprint (Feb-Mar 2026)
-    # Morning: 10:00 UTC = 13:00 MSK — product card
-    - cron: "0 10 * * *"
-    # Evening: 16:00 UTC = 19:00 MSK — product or themed post
-    - cron: "0 16 * * *"
+  # Schedule disabled 2026-05-01 — resumable freeze (see algora-sync handoff).
+  # workflow_dispatch left enabled for manual one-off runs if needed.
+  # schedule:
+  #   # Morning: 10:00 UTC = 13:00 MSK — product card
+  #   - cron: "0 10 * * *"
+  #   # Evening: 16:00 UTC = 19:00 MSK — product or themed post
+  #   - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       post_type:
